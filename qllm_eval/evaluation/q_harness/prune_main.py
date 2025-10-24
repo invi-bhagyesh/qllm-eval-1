@@ -67,43 +67,70 @@ def main():
 
     # Step 2: Prune model (if enabled)
     removed_layers = []
+    model_path_for_eval = args.model_path  # Default to original path
+    
     if args.enable_pruning and args.n_prune_layers > 0:
         print("\n" + "="*60)
         print("STEP 2: PRUNING")
         print("="*60)
         model, removed_layers = prune_model(model, args, enc)
         print("Pruning complete!")
-    else:
-        print("\nSkipping pruning (not enabled or n_prune_layers=0)")
-
-    # Step 3: Save the model (if output path provided)
-    if args.output_path:
-        print("\n" + "="*60)
-        print("STEP 3: SAVING MODEL")
-        print("="*60)
-        print(f"Saving to: {args.output_path}")
-        if not os.path.exists(args.output_path):
-            os.makedirs(args.output_path)
-        model.save_pretrained(args.output_path, safe_serialization=False)
-        enc.save_pretrained(args.output_path)
+        
+        # **CRITICAL FIX: Save and reload the pruned model**
+        print("\nSaving pruned model to temporary location for proper cache initialization...")
+        temp_path = args.output_path if args.output_path else "./temp_pruned_model"
+        if not os.path.exists(temp_path):
+            os.makedirs(temp_path)
+        
+        model.save_pretrained(temp_path, safe_serialization=False)
+        enc.save_pretrained(temp_path)
         
         # Save pruning info
-        if removed_layers:
-            pruning_info = {
-                "removed_layers": removed_layers,
-                "n_prune_layers": args.n_prune_layers,
-                "pruning_method": args.pruning_method,
-                "remaining_layers": len(get_model_layers(model, args.layers_path))
-            }
-            with open(os.path.join(args.output_path, "pruning_info.json"), 'w') as f:
-                json.dump(pruning_info, f, indent=2)
-        print("Model saved!")
+        pruning_info = {
+            "removed_layers": removed_layers,
+            "n_prune_layers": args.n_prune_layers,
+            "pruning_method": args.pruning_method,
+            "remaining_layers": len(get_model_layers(model, args.layers_path))
+        }
+        with open(os.path.join(temp_path, "pruning_info.json"), 'w') as f:
+            json.dump(pruning_info, f, indent=2)
+        
+        print(f"Model saved to: {temp_path}")
+        
+        # Reload the model to ensure proper initialization
+        print("Reloading pruned model for evaluation...")
+        del model  # Free memory
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        
+        # Reload with proper configuration
+        model, enc = build_model_and_enc(temp_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
+        model_path_for_eval = temp_path
+        print("Pruned model reloaded successfully!")
+        
+    else:
+        print("\nSkipping pruning (not enabled or n_prune_layers=0)")
+        
+        # Step 3: Save the model (if output path provided and no pruning)
+        if args.output_path:
+            print("\n" + "="*60)
+            print("STEP 3: SAVING MODEL")
+            print("="*60)
+            print(f"Saving to: {args.output_path}")
+            if not os.path.exists(args.output_path):
+                os.makedirs(args.output_path)
+            model.save_pretrained(args.output_path, safe_serialization=False)
+            enc.save_pretrained(args.output_path)
+            print("Model saved!")
 
     # Step 4: Evaluation
     print("\n" + "="*60)
     print("STEP 4: EVALUATION")
     print("="*60)
-    lm_eval_model = LMEvalAdaptor(args.model_path, model, enc, 1)
+    
+    # Use the correct model path (original or temp pruned location)
+    lm_eval_model = LMEvalAdaptor(model_path_for_eval, model, enc, 1)
 
     if args.tasks is not None:
         task_names = args.tasks.split(",")
