@@ -34,20 +34,21 @@ parser.add_argument("--layers_path", type=str, default="model.layers",
 parser.add_argument("--n_prune_layers", type=int, default=0, 
                     help="Number of layers to prune")
 parser.add_argument("--pruning_method", type=str, default="importance", 
-                    choices=["importance", "angular"], 
-                    help="Pruning method: 'importance' or 'angular'")
+                    choices=["importance", "angular", "reverse"], 
+                    help="Pruning method: 'importance' (block influence), 'angular' (angular distance), or 'reverse' (remove last n layers)")
 parser.add_argument("--calibration_dataset", type=str, default="wikitext",
-                    help="Dataset for calibration (wikitext, c4, etc.)")
+                    help="Dataset for calibration (wikitext, c4, etc.) - not used for reverse pruning")
 parser.add_argument("--n_calibration_samples", type=int, default=1000,
-                    help="Number of calibration samples")
+                    help="Number of calibration samples - not used for reverse pruning")
 parser.add_argument("--pruning_stride", type=int, default=256,
-                    help="Stride for sliding window during importance computation")
+                    help="Stride for sliding window during importance computation - not used for reverse pruning")
 parser.add_argument("--pruning_max_seq_len", type=int, default=1024,
-                    help="Maximum sequence length for pruning calibration")
+                    help="Maximum sequence length for pruning calibration - not used for reverse pruning")
 parser.add_argument("--pruning_batch_size", type=int, default=1,
-                    help="Batch size for pruning calibration")
+                    help="Batch size for pruning calibration - not used for reverse pruning")
 
 args = parser.parse_args()
+
 
 def main():
     print("* Quantization Format: kv_{}_w_{}_a_{}".format(args.kv_bit, args.w_bit, args.a_bit))
@@ -73,6 +74,10 @@ def main():
         print("\n" + "="*60)
         print("STEP 2: PRUNING")
         print("="*60)
+        print(f"Pruning method: {args.pruning_method}")
+        if args.pruning_method == "reverse":
+            print("NOTE: Reverse pruning doesn't require calibration data!")
+        
         model, removed_layers = prune_model(model, args, enc)
         print("Pruning complete!")
         
@@ -161,7 +166,8 @@ def main():
             if removed_layers:
                 result_dict['pruning_info'] = {
                     'removed_layers': removed_layers,
-                    'n_layers_removed': len(removed_layers)
+                    'n_layers_removed': len(removed_layers),
+                    'pruning_method': args.pruning_method
                 }
             
             with open(output_file, 'w') as f:
@@ -172,6 +178,7 @@ def main():
         print("="*60)
         if removed_layers:
             print(f"Pruned layers: {removed_layers}")
+            print(f"Pruning method: {args.pruning_method}")
         print(f"Quantization: kv_{args.kv_bit}_w_{args.w_bit}_a_{args.a_bit}")
         print("\nTask Results:")
         print(evaluator.make_table(results))

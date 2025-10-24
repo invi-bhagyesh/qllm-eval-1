@@ -7,11 +7,6 @@ from torch.utils.data import DataLoader
 from datasets import load_dataset
 from tqdm import tqdm
 
-from qllm_eval.quantization.quant_wrapper import quantize_model
-from qllm_eval.utils import build_model_and_enc
-from qllm_eval.evaluation.q_harness.lm_eval_adaptor import LMEvalAdaptor
-from lm_eval import evaluator
-
 
 def block_influence(in_hidden, out_hidden, angular=False):
     """
@@ -35,6 +30,7 @@ def block_influence(in_hidden, out_hidden, angular=False):
     else:
         # Use L2 distance
         return torch.norm(out_hidden - in_hidden, p=2, dim=-1)
+
 
 def get_model_layers(model, layers_path):
     """Extract layers from model using dot notation path."""
@@ -115,26 +111,40 @@ def compute_layer_importance(model, layers, dataloader, args, tokenizer):
     
     return importances
 
-def remove_layers(layers, importances, n_prune, angular=False):
+
+def remove_layers(layers, importances, n_prune, pruning_method="importance"):
     """
-    Remove layers based on importance scores and re-index remaining layers.
+    Remove layers based on importance scores or pruning method and re-index remaining layers.
     
     Args:
         layers: Model layers (ModuleList)
-        importances: Layer importance scores
+        importances: Layer importance scores (can be None for reverse pruning)
         n_prune: Number of layers to prune
-        angular: Whether angular distance was used
+        pruning_method: Pruning method ('importance', 'angular', or 'reverse')
     
     Returns:
         List of removed layer indices
     """
-    if angular:
+    total_layers = len(layers)
+    
+    if pruning_method == "reverse":
+        # Reverse-order pruning: remove the last n layers
+        # Research shows this is surprisingly effective for LLMs
+        layers_to_remove = list(range(total_layers - n_prune, total_layers))
+        print(f"Reverse pruning: removing last {n_prune} layers (indices {layers_to_remove})")
+        
+    elif pruning_method == "angular":
         # For angular: find consecutive block with lowest importance
+        assert importances is not None, "Importances required for angular pruning"
         start_layer = np.argsort(np.array(importances[:-n_prune+1]))[0]
         layers_to_remove = list(range(start_layer, start_layer + n_prune))
-    else:
+        print(f"Angular pruning: removing consecutive layers {layers_to_remove}")
+        
+    else:  # importance
         # For standard: remove layers with lowest importance scores
+        assert importances is not None, "Importances required for importance-based pruning"
         layers_to_remove = np.argsort(np.array(importances))[:n_prune].tolist()
+        print(f"Importance pruning: removing layers with lowest scores {layers_to_remove}")
     
     # Remove layers in reverse to avoid indexing errors
     for layer_idx in sorted(layers_to_remove, reverse=True):
@@ -146,6 +156,7 @@ def remove_layers(layers, importances, n_prune, angular=False):
             layer.layer_idx = new_idx
     
     return layers_to_remove
+
 
 def fix_model_config(model, n_remaining_layers):
     """
@@ -165,9 +176,10 @@ def fix_model_config(model, n_remaining_layers):
     
     return model
 
+
 def prune_model(model, args, tokenizer):
     """
-    Prune model layers based on importance scores.
+    Prune model layers based on importance scores or pruning method.
     
     Args:
         model: The language model to prune
@@ -177,37 +189,43 @@ def prune_model(model, args, tokenizer):
     Returns:
         Tuple of (pruned_model, removed_layers)
     """
-    # Load calibration dataset
-    print(f"\nLoading calibration dataset: {args.calibration_dataset}...")
-    if args.calibration_dataset == "wikitext":
-        data = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="validation")
-        data = data.filter(lambda x: len(x['text'].strip()) > 100)
-    elif args.calibration_dataset == "c4":
-        data = load_dataset("allenai/c4", "en", split="validation", streaming=True)
-        data = data.take(args.n_calibration_samples)
-    else:
-        raise ValueError(f"Unsupported calibration dataset: {args.calibration_dataset}")
-    
-    data = data.select(range(min(args.n_calibration_samples, len(data))))
-    
-    dataloader = DataLoader(
-        data,
-        batch_size=args.pruning_batch_size,
-        shuffle=True,
-    )
-    
     # Get model layers
     layers = get_model_layers(model, args.layers_path)
     original_n_layers = len(layers)
     print(f"Total layers before pruning: {original_n_layers}")
     
-    # Compute importance scores
-    importances = compute_layer_importance(model, layers, dataloader, args, tokenizer)
-    
-    # Remove layers
-    print(f"\nRemoving {args.n_prune_layers} layers based on importance scores...")
-    angular = (args.pruning_method == "angular")
-    removed_layers = remove_layers(layers, importances, args.n_prune_layers, angular)
+    # For reverse pruning, we don't need to compute importances
+    if args.pruning_method == "reverse":
+        print(f"\nUsing reverse-order pruning (removing last {args.n_prune_layers} layers)...")
+        print("Research shows this simple method is often very effective!")
+        importances = None
+        removed_layers = remove_layers(layers, importances, args.n_prune_layers, args.pruning_method)
+    else:
+        # Load calibration dataset for importance-based methods
+        print(f"\nLoading calibration dataset: {args.calibration_dataset}...")
+        if args.calibration_dataset == "wikitext":
+            data = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="validation")
+            data = data.filter(lambda x: len(x['text'].strip()) > 100)
+        elif args.calibration_dataset == "c4":
+            data = load_dataset("allenai/c4", "en", split="validation", streaming=True)
+            data = data.take(args.n_calibration_samples)
+        else:
+            raise ValueError(f"Unsupported calibration dataset: {args.calibration_dataset}")
+        
+        data = data.select(range(min(args.n_calibration_samples, len(data))))
+        
+        dataloader = DataLoader(
+            data,
+            batch_size=args.pruning_batch_size,
+            shuffle=True,
+        )
+        
+        # Compute importance scores
+        importances = compute_layer_importance(model, layers, dataloader, args, tokenizer)
+        
+        # Remove layers based on importance
+        print(f"\nRemoving {args.n_prune_layers} layers based on {args.pruning_method} scores...")
+        removed_layers = remove_layers(layers, importances, args.n_prune_layers, args.pruning_method)
     
     # **FIX: Update model configuration**
     n_remaining_layers = len(layers)
