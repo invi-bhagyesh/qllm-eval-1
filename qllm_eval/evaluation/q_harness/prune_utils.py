@@ -117,10 +117,10 @@ def compute_layer_importance(model, layers, dataloader, args, tokenizer):
 
 def remove_layers(layers, importances, n_prune, angular=False):
     """
-    Remove layers based on importance scores.
+    Remove layers based on importance scores and re-index remaining layers.
     
     Args:
-        layers: Model layers
+        layers: Model layers (ModuleList)
         importances: Layer importance scores
         n_prune: Number of layers to prune
         angular: Whether angular distance was used
@@ -140,8 +140,30 @@ def remove_layers(layers, importances, n_prune, angular=False):
     for layer_idx in sorted(layers_to_remove, reverse=True):
         del layers[layer_idx]
     
+    # **FIX: Re-index the remaining layers**
+    for new_idx, layer in enumerate(layers):
+        if hasattr(layer, 'layer_idx'):
+            layer.layer_idx = new_idx
+    
     return layers_to_remove
 
+def fix_model_config(model, n_remaining_layers):
+    """
+    Update model configuration to reflect the new number of layers.
+    
+    Args:
+        model: The pruned model
+        n_remaining_layers: Number of layers after pruning
+    """
+    # Update config
+    if hasattr(model, 'config'):
+        model.config.num_hidden_layers = n_remaining_layers
+    
+    # For models with nested structure (e.g., LlamaForCausalLM)
+    if hasattr(model, 'model') and hasattr(model.model, 'config'):
+        model.model.config.num_hidden_layers = n_remaining_layers
+    
+    return model
 
 def prune_model(model, args, tokenizer):
     """
@@ -176,7 +198,8 @@ def prune_model(model, args, tokenizer):
     
     # Get model layers
     layers = get_model_layers(model, args.layers_path)
-    print(f"Total layers before pruning: {len(layers)}")
+    original_n_layers = len(layers)
+    print(f"Total layers before pruning: {original_n_layers}")
     
     # Compute importance scores
     importances = compute_layer_importance(model, layers, dataloader, args, tokenizer)
@@ -186,7 +209,12 @@ def prune_model(model, args, tokenizer):
     angular = (args.pruning_method == "angular")
     removed_layers = remove_layers(layers, importances, args.n_prune_layers, angular)
     
+    # **FIX: Update model configuration**
+    n_remaining_layers = len(layers)
+    model = fix_model_config(model, n_remaining_layers)
+    
     print(f"Removed layers: {removed_layers}")
-    print(f"Remaining layers: {len(layers)}")
+    print(f"Remaining layers: {n_remaining_layers}")
+    print(f"Model config updated: num_hidden_layers = {n_remaining_layers}")
     
     return model, removed_layers
