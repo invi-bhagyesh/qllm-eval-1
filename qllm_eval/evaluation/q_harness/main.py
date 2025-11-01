@@ -1,6 +1,7 @@
 import os
 import json
 import argparse
+import datasets  # Add this import
 
 
 from qllm_eval.quantization.quant_wrapper import quantize_model
@@ -26,6 +27,9 @@ args = parser.parse_args()
 
 
 def main():
+    # Set trust_remote_code globally for datasets
+    datasets.config.HF_DATASETS_TRUST_REMOTE_CODE = True  # Add this line
+    
     print("* Quantization Format: kv_{}_w_{}_a_{}".format(args.kv_bit, args.w_bit, args.a_bit))
     if 'falcon' in args.model_path.lower():
         args.kv_group_size = 64
@@ -58,7 +62,7 @@ def main():
             model=lm_eval_model,
             tasks=task_names,
             batch_size=1,
-            cache_requests=None,  # Changed from no_cache=True
+            cache_requests=None,
             num_fewshot=0,
         )
         # print(results)
