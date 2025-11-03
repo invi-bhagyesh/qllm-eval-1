@@ -23,7 +23,6 @@ parser.add_argument("--a_group_size", type=int, default=128)
 parser.add_argument("--a_bit", type=int, default=16)
 parser.add_argument("--kv_group_size", type=int, default=128)
 parser.add_argument("--kv_bit", type=int, default=16)
-parser.add_argument("--dataset_name", type=str, default="nyu-mll/crows-pairs", help="Dataset for all RLHF stages")
 parser.add_argument("--rlhf_chosen", type=str, required=True)
 parser.add_argument("--rlhf_rejected", type=str, required=True)
 parser.add_argument("--rlhf_prompt", type=str, required=True)
@@ -43,7 +42,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(args.model_path)
 
     # === Load dataset once ===
-    raw_dataset = datasets.load_dataset(args.dataset_name)
+    raw_dataset = datasets.load_dataset(args.model_path)
     dataset = raw_dataset["test"]
 
     # === Stage 1: SFT ===
