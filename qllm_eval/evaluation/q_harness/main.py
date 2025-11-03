@@ -1,4 +1,5 @@
 import os
+os.environ["WANDB_MODE"] = "offline"
 import json
 import argparse
 import datasets
