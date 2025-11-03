@@ -14,6 +14,7 @@ from trl import RewardTrainer, PPOTrainer, PPOConfig
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_path", type=str, help="path of the hf model")
 parser.add_argument("--output_path", type=str, help="path to save the quantized model")
+parser.add_argument("--dataset_name", type=str, default="nyu-mll/crows-pairs", help="Dataset for all RLHF stages")
 parser.add_argument("--use_flash_attn", action="store_true")
 parser.add_argument("--tasks", type=str, default="truthfulqa_mc")
 parser.add_argument("--metrics", type=str, default="mc1,mc2")
@@ -42,13 +43,13 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(args.model_path)
 
     # === Load dataset once ===
-    raw_dataset = datasets.load_dataset(args.model_path)
+    raw_dataset = datasets.load_dataset(args.dataset_name)
     dataset = raw_dataset["test"]
 
     # === Stage 1: SFT ===
     print("* Stage 1: Supervised Fine-Tuning")
     def tokenize_fn(batch):
-        return tokenizer(batch["sent_less"], truncation=True, padding="max_length", max_length=256)
+        return tokenizer(batch[args.rlhf_chosen], truncation=True, padding="max_length", max_length=256)
     tokenized_sft = dataset.map(tokenize_fn, batched=True)
 
     sft_args = TrainingArguments(
