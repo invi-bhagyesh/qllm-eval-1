@@ -50,7 +50,15 @@ def main():
     # === Stage 1: SFT ===
     print("* Stage 1: Supervised Fine-Tuning")
     def tokenize_fn(batch):
-        return tokenizer(batch[args.rlhf_chosen], truncation=True, padding="max_length", max_length=256)
+        outputs = tokenizer(
+            batch[args.rlhf_chosen],
+            truncation=True,
+            padding="max_length",
+            max_length=256,
+        )
+        # Provide labels for causal LM loss
+        outputs["labels"] = outputs["input_ids"].copy()
+        return outputs
     tokenized_sft = dataset.map(tokenize_fn, batched=True)
 
     sft_args = TrainingArguments(
