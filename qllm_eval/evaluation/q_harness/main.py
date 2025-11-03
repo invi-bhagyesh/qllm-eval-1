@@ -50,25 +50,27 @@ def main():
     # === Stage 1: SFT ===
     print("* Stage 1: Supervised Fine-Tuning")
     def tokenize_fn(batch):
-        outputs = tokenizer(
-            batch[args.rlhf_chosen],
-            truncation=True,
-            padding="max_length",
-            max_length=256,
-        )
-        # Provide labels for causal LM loss
+        text = batch[args.rlhf_prompt] + " " + batch[args.rlhf_chosen]
+        outputs = tokenizer(text, truncation=True, padding="max_length", max_length=256)
         outputs["labels"] = outputs["input_ids"].copy()
         return outputs
+
     tokenized_sft = dataset.map(tokenize_fn, batched=True)
 
     sft_args = TrainingArguments(
         output_dir="./sft_model",
-        per_device_train_batch_size=2,
+        per_device_train_batch_size=1,         # smaller batch
+        gradient_accumulation_steps=4,         # keeps effective batch ≈ 4
         learning_rate=2e-5,
         num_train_epochs=1,
         logging_steps=10,
         save_total_limit=1,
+        fp16=True,                             # mixed precision
+        gradient_checkpointing=True,           # save memory
+        optim="adamw_torch_fused",             # efficient optimizer
+        report_to=[]                           # disables wandb/tensorboard
     )
+
 
     sft_trainer = Trainer(model=model, args=sft_args, train_dataset=tokenized_sft)
     sft_trainer.train()
@@ -76,28 +78,31 @@ def main():
 
     # === Stage 2: Reward Model ===
     print("* Stage 2: Reward Model Training using same LM")
-    pairs = [{"prompt": row[args.prompt], "chosen": row[args.chosen], "rejected": row[args.rejected]} for row in dataset]
+    pairs = [{"prompt": row[args.rlhf_prompt], "chosen": row[args.rlhf_chosen], "rejected": row[args.rlhf_rejected]} for row in dataset]
 
+    from datasets import Dataset
+    reward_dataset = Dataset.from_list(pairs)
     reward_trainer = RewardTrainer(
-        model=model,  # same LM used as reward model
+        model=model,
         tokenizer=tokenizer,
-        train_dataset=pairs,
-        args=None,
+        train_dataset=reward_dataset,
+        args=None
     )
+
     reward_trainer.train()
     print("* Reward model training completed")
 
     # === Stage 3: RLHF PPO ===
     print("* Stage 3: PPO alignment using same LM as reward")
-    ppo_config = PPOConfig(batch_size=2, forward_batch_size=1)
     ppo_trainer = PPOTrainer(
         config=ppo_config,
-        model=model,        # same LM
+        model=model,
         ref_model=None,
         tokenizer=tokenizer,
-        reward_model=model, # same LM as reward
-        dataset=pairs,
+        reward_model=model,
+        dataset=reward_dataset
     )
+
     ppo_trainer.train()
     model.save_pretrained("./aligned_model")
     print("* RLHF alignment complete")
