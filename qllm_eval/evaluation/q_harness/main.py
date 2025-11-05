@@ -85,29 +85,29 @@ def main():
 
         print("Starting DPO fine-tuning using TRLX...")
 
-        # Define DPO config
-        # Copy the default DPO config
-        trlx_config = {
-            "learning_rate": 5e-6,
-            "batch_size": 2,
-            "gradient_accumulation_steps": 4,
-            "max_steps": 200,
-            "logging_dir": "./trlx_logs",
-            "stop_sequences": ["\n"]  # optional
-        }
-        import trlx
+        # OpenRLHF DPO-style fine-tuning
+        from openrlhf import RLHFTrainer, RLHFConfig
 
-        trainer = trlx.train(
+        # Create RLHF config
+        config = RLHFConfig(
             model=model,
-            train_data=train_data,  # list of {"prompt":..., "chosen":..., "rejected":...}
             tokenizer=tokenizer,
-            reward_fn=None,  # DPO-style
-            config=trlx_config
+            train_dataset=train_data,  # list of {"prompt":..., "chosen":..., "rejected":...}
+            reward_model=None,         # DPO-style
+            max_steps=200,
+            batch_size=2,
+            learning_rate=5e-6,
+            gradient_accumulation_steps=4,
+            logging_dir="./rlhf_logs"
         )
 
+        # Initialize trainer and train
+        trainer = RLHFTrainer(config)
+        trainer.train()
 
-        model.save_pretrained("./dpo_finetuned")
-        print("DPO fine-tuning complete. Proceeding to quantization...")
+        # Save the fine-tuned model
+        model.save_pretrained("./rlhf_finetuned")
+        print("DPO fine-tuning complete with OpenRLHF. Proceeding to quantization...")
 
 ###########################################################################
     # quantize model
