@@ -108,30 +108,45 @@ def main():
 
         from datasets import Dataset
 
-        # assuming train_data is a list of dicts like [{"text": "sample 1"}, {"text": "sample 2"}, ...]
+        # Convert list of dicts to Dataset
         train_data = Dataset.from_list(train_data)
 
-        # then you can use map
+        # Tokenize each example based on 'prompt', 'chosen', 'rejected'
         def preprocess(example):
-            return tokenizer(
-                example["text"],
-                truncation=True,
-                padding="max_length",
-                max_length=512
-            )
+            return {
+                "prompt_ids": tokenizer(
+                    example["prompt"],
+                    truncation=True,
+                    padding="max_length",
+                    max_length=512
+                )["input_ids"],
+                "chosen_ids": tokenizer(
+                    example["chosen"],
+                    truncation=True,
+                    padding="max_length",
+                    max_length=512
+                )["input_ids"],
+                "rejected_ids": tokenizer(
+                    example["rejected"],
+                    truncation=True,
+                    padding="max_length",
+                    max_length=512
+                )["input_ids"],
+            }
 
-        train_data = train_data.map(preprocess, batched=True)
+        train_data = train_data.map(preprocess, batched=False)  # batched=False for individual dicts
 
-
-        # Initialize trainer
+        # Initialize DPOTrainer
         trainer = DPOTrainer(
             model=model,
             ref_model=None,
             args=training_args,
-            processing_class=tokenizer,  # pass tokenizer here
+            processing_class=tokenizer,
             train_dataset=train_data,
             eval_dataset=None
         )
+
+        
 
         # Train
         trainer.train()
