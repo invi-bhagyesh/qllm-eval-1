@@ -45,7 +45,8 @@ def main():
         from datasets import load_dataset
         import pandas as pd
         from transformers import AutoTokenizer, AutoModelForCausalLM
-        from trlx.data.configs import TRLConfig
+        from trlx.data import default_configs
+
 
 
         print("Loading crows-pairs dataset for DPO...")
@@ -85,13 +86,16 @@ def main():
         print("Starting DPO fine-tuning using TRLX...")
 
         # Define DPO config
-        dpo_config = TRLConfig(
-            learning_rate=5e-6,
-            batch_size=2,
-            gradient_accumulation_steps=4,
-            max_steps=200,
-            logging_dir="./trlx_logs"
-        )
+        # Copy the default DPO config
+        dpo_config = default_configs.dpo
+
+        # Optionally override some values
+        dpo_config.learning_rate = 5e-6
+        dpo_config.batch_size = 2
+        dpo_config.gradient_accumulation_steps = 4
+        dpo_config.max_steps = 200
+        dpo_config.logging_dir = "./trlx_logs"
+
 
         # Start DPO training
         trainer = trlx.train(
