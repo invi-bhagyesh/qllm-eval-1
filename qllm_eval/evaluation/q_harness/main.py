@@ -2,7 +2,7 @@ import os
 import json
 import argparse
 import datasets  # Add this import
-
+import sys
 
 from qllm_eval.quantization.quant_wrapper import quantize_model
 from qllm_eval.utils import build_model_and_enc
@@ -66,6 +66,9 @@ def main():
         print(pairs_df.head())
 
         # DPO fine-tuning before quantization
+        # Patch transformers import for TRL
+        import transformers.generation.utils as gen_utils
+        sys.modules['trl.core'].__dict__['top_k_top_p_filtering'] = gen_utils.top_k_top_p_filtering
         from trl import DPOTrainer, DPOConfig
         from transformers import AutoTokenizer, AutoModelForCausalLM
 
