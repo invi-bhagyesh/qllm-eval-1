@@ -45,7 +45,6 @@ def main():
         from datasets import load_dataset
         import pandas as pd
         from transformers import AutoTokenizer, AutoModelForCausalLM
-        from trlx.data import default_configs
 
 
 
