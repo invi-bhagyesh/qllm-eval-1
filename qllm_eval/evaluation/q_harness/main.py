@@ -46,7 +46,7 @@ def main():
         import pandas as pd
 
         print("Loading crows-pairs dataset for DPO...")
-        ds = load_dataset("crows_pairs", "english")["test"]
+        ds = load_dataset("BigScienceBiasEval/crows_pairs_multilingual")["test"]
         pairs = []
 
         for item in ds:
