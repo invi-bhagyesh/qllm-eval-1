@@ -110,9 +110,9 @@ def main():
             model=model,
             ref_model=None,
             args=training_args,
+            processing_class=tokenizer,  # pass the tokenizer here
             train_dataset=train_data,
             eval_dataset=None,
-            tokenizer=tokenizer,
             max_prompt_length=512,
             max_length=512
         )
