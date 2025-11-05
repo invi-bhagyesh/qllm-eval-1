@@ -100,6 +100,7 @@ def main():
             warmup_steps=2,
             fp16=False,
             save_steps=500,
+            eval_strategy="no",  # <-- disable evaluation
             report_to='none'
         )
 
@@ -144,9 +145,7 @@ def main():
             processing_class=tokenizer,
             train_dataset=train_data,
             eval_dataset=None
-        )
-
-        
+        )        
 
         # Train
         trainer.train()
