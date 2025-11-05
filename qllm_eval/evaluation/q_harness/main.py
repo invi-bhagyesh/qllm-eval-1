@@ -88,7 +88,6 @@ def main():
 
         # Define DPO training config
         training_args = DPOConfig(
-            beta=0.1,
             output_dir="./dpo_finetuned",
             num_train_epochs=1,
             per_device_train_batch_size=2,
