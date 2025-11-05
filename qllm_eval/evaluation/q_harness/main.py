@@ -56,7 +56,7 @@ def main():
                 chosen, rejected = rejected, chosen
 
             pairs.append({
-                "prompt": item["template"].replace("___", item["bias_target"]),
+                "prompt": f"Bias type: {item['bias_type']}",  # minimal context
                 "chosen": chosen,
                 "rejected": rejected,
                 "bias_type": item["bias_type"]
