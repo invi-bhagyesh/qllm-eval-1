@@ -103,18 +103,28 @@ def main():
             report_to='none'
         )
 
-        # tokenizer.pad_token = tokenizer.eos_token
+        # Make sure tokenizer has a pad token
+        tokenizer.pad_token = tokenizer.eos_token
+
+        # Preprocess dataset to handle sequence lengths
+        def preprocess(example):
+            return tokenizer(
+                example["text"],  # or your input column
+                truncation=True,
+                padding="max_length",
+                max_length=512
+            )
+
+        train_data = train_data.map(preprocess, batched=True)
 
         # Initialize trainer
         trainer = DPOTrainer(
             model=model,
             ref_model=None,
             args=training_args,
-            processing_class=tokenizer,  # pass the tokenizer here
+            processing_class=tokenizer,  # pass tokenizer here
             train_dataset=train_data,
-            eval_dataset=None,
-            max_prompt_length=512,
-            max_length=512
+            eval_dataset=None
         )
 
         # Train
