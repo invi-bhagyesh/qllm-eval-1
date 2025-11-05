@@ -85,29 +85,48 @@ def main():
 
         print("Starting DPO fine-tuning using TRLX...")
 
-        # OpenRLHF DPO-style fine-tuning
-        from openrlhf import RLHFTrainer, RLHFConfig
+        from trl import DPOTrainer, DPOConfig
 
-        # Create RLHF config
-        config = RLHFConfig(
-            model=model,
-            tokenizer=tokenizer,
-            train_dataset=train_data,  # list of {"prompt":..., "chosen":..., "rejected":...}
-            reward_model=None,         # DPO-style
-            max_steps=200,
-            batch_size=2,
+        # Define DPO training config
+        training_args = DPOConfig(
+            beta=0.1,
+            output_dir="./dpo_finetuned",
+            num_train_epochs=1,
+            per_device_train_batch_size=2,
+            per_device_eval_batch_size=2,
+            remove_unused_columns=False,
+            logging_steps=10,
+            gradient_accumulation_steps=1,
             learning_rate=5e-6,
-            gradient_accumulation_steps=4,
-            logging_dir="./rlhf_logs"
+            eval_strategy="epoch",
+            warmup_steps=2,
+            fp16=False,
+            save_steps=500,
+            report_to='none'
         )
 
-        # Initialize trainer and train
-        trainer = RLHFTrainer(config)
+        # tokenizer.pad_token = tokenizer.eos_token
+
+        # Initialize trainer
+        trainer = DPOTrainer(
+            model=model,
+            ref_model=None,
+            args=training_args,
+            beta=0.1,
+            train_dataset=train_data,
+            eval_dataset=None,
+            tokenizer=tokenizer,
+            max_prompt_length=512,
+            max_length=512
+        )
+
+        # Train
         trainer.train()
 
         # Save the fine-tuned model
-        model.save_pretrained("./rlhf_finetuned")
-        print("DPO fine-tuning complete with OpenRLHF. Proceeding to quantization...")
+        model.save_pretrained("./dpo_finetuned")
+        print("DPO fine-tuning complete. Proceeding to quantization...")
+
 
 ###########################################################################
     # quantize model
