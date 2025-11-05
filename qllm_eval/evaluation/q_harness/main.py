@@ -87,24 +87,24 @@ def main():
 
         # Define DPO config
         # Copy the default DPO config
-        dpo_config = default_configs.dpo
+        trlx_config = {
+            "learning_rate": 5e-6,
+            "batch_size": 2,
+            "gradient_accumulation_steps": 4,
+            "max_steps": 200,
+            "logging_dir": "./trlx_logs",
+            "stop_sequences": ["\n"]  # optional
+        }
+        import trlx
 
-        # Optionally override some values
-        dpo_config.learning_rate = 5e-6
-        dpo_config.batch_size = 2
-        dpo_config.gradient_accumulation_steps = 4
-        dpo_config.max_steps = 200
-        dpo_config.logging_dir = "./trlx_logs"
-
-
-        # Start DPO training
         trainer = trlx.train(
-            model,
-            train_data,
-            reward_fn=None,  # optional custom reward function
+            model=model,
+            train_data=train_data,  # list of {"prompt":..., "chosen":..., "rejected":...}
             tokenizer=tokenizer,
-            config=dpo_config
+            reward_fn=None,  # DPO-style
+            config=trlx_config
         )
+
 
         model.save_pretrained("./dpo_finetuned")
         print("DPO fine-tuning complete. Proceeding to quantization...")
