@@ -110,7 +110,6 @@ def main():
             model=model,
             ref_model=None,
             args=training_args,
-            beta=0.1,
             train_dataset=train_data,
             eval_dataset=None,
             tokenizer=tokenizer,
