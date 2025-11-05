@@ -96,7 +96,6 @@ def main():
             logging_steps=10,
             gradient_accumulation_steps=1,
             learning_rate=5e-6,
-            eval_strategy="epoch",
             warmup_steps=2,
             fp16=False,
             save_steps=500,
