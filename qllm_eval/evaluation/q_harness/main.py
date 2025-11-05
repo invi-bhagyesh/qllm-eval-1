@@ -68,7 +68,6 @@ def main():
         # DPO fine-tuning before quantization
         # Patch transformers import for TRL
         import transformers.generation.utils as gen_utils
-        sys.modules['trl.core'].__dict__['top_k_top_p_filtering'] = gen_utils.top_k_top_p_filtering
         from trl import DPOTrainer, DPOConfig
         from transformers import AutoTokenizer, AutoModelForCausalLM
 
