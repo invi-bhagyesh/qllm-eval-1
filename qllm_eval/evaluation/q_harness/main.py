@@ -44,6 +44,8 @@ def main():
     if args.dataset == "crows-pairs":
         from datasets import load_dataset
         import pandas as pd
+        from transformers import AutoTokenizer, AutoModelForCausalLM
+        import trlx
 
         print("Loading crows-pairs dataset for DPO...")
         ds = load_dataset("BigScienceBiasEval/crows_pairs_multilingual")["test"]
@@ -65,43 +67,43 @@ def main():
         pairs_df = pd.DataFrame(pairs)
         print(pairs_df.head())
 
-        # DPO fine-tuning before quantization
-        # Patch transformers import for TRL
-        import transformers.generation.utils as gen_utils
-        from trl import DPOTrainer, DPOConfig
-        from transformers import AutoTokenizer, AutoModelForCausalLM
-
-        print("Starting DPO fine-tuning before quantization...")
-
+        # Load tokenizer and model
         tokenizer = AutoTokenizer.from_pretrained(args.model_path)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
         model = AutoModelForCausalLM.from_pretrained(args.model_path)
 
-        training_args = DPOConfig(
-            output_dir="./dpo_output",
-            per_device_train_batch_size=2,
-            gradient_accumulation_steps=4,
+        # Convert dataset to dict
+        train_data = [{
+            "prompt": row["prompt"],
+            "chosen": row["chosen"],
+            "rejected": row["rejected"]
+        } for _, row in pairs_df.iterrows()]
+
+        print("Starting DPO fine-tuning using TRLX...")
+
+        # Define DPO config
+        dpo_config = trlx.TrainingConfig(
             learning_rate=5e-6,
+            batch_size=2,
+            gradient_accumulation_steps=4,
             max_steps=200,
-            logging_steps=10,
-            save_strategy="no"
+            logging_dir="./trlx_logs"
         )
 
-        dpo_trainer = DPOTrainer(
+        # Start DPO training
+        trainer = trlx.train(
             model,
-            ref_model=None,
-            args=training_args,
-            beta=0.1,
-            train_dataset=pairs_df,
+            train_data,
+            reward_fn=None,  # optional custom reward function
             tokenizer=tokenizer,
-            max_length=512
+            config=dpo_config
         )
 
-        dpo_trainer.train()
         model.save_pretrained("./dpo_finetuned")
         print("DPO fine-tuning complete. Proceeding to quantization...")
+
 ###########################################################################
     # quantize model
     model = quantize_model(model, args)
