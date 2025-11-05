@@ -45,7 +45,8 @@ def main():
         from datasets import load_dataset
         import pandas as pd
         from transformers import AutoTokenizer, AutoModelForCausalLM
-        import trlx
+        from trlx.data.configs import TRLConfig
+
 
         print("Loading crows-pairs dataset for DPO...")
         ds = load_dataset("BigScienceBiasEval/crows_pairs_multilingual")["test"]
@@ -84,7 +85,7 @@ def main():
         print("Starting DPO fine-tuning using TRLX...")
 
         # Define DPO config
-        dpo_config = trlx.TrainingConfig(
+        dpo_config = TRLConfig(
             learning_rate=5e-6,
             batch_size=2,
             gradient_accumulation_steps=4,
