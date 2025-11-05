@@ -106,16 +106,22 @@ def main():
         # Make sure tokenizer has a pad token
         tokenizer.pad_token = tokenizer.eos_token
 
-        # Preprocess dataset to handle sequence lengths
+        from datasets import Dataset
+
+        # assuming train_data is a list of dicts like [{"text": "sample 1"}, {"text": "sample 2"}, ...]
+        train_data = Dataset.from_list(train_data)
+
+        # then you can use map
         def preprocess(example):
             return tokenizer(
-                example["text"],  # or your input column
+                example["text"],
                 truncation=True,
                 padding="max_length",
                 max_length=512
             )
 
         train_data = train_data.map(preprocess, batched=True)
+
 
         # Initialize trainer
         trainer = DPOTrainer(
