@@ -47,6 +47,8 @@ def main():
         if args.dpo_path is not None:
             print(f"Loading existing DPO model from {args.dpo_path}, skipping DPO training...")
             from transformers import AutoModelForCausalLM
+            from transformers import AutoTokenizer, AutoModelForCausalLM
+
             model = AutoModelForCausalLM.from_pretrained(args.dpo_path)
             tokenizer = AutoTokenizer.from_pretrained(args.dpo_path)
             if tokenizer.pad_token is None:
