@@ -23,6 +23,8 @@ parser.add_argument("--a_bit", type=int, default=16)
 parser.add_argument("--kv_group_size", type=int, default=128)
 parser.add_argument("--kv_bit", type=int, default=16)
 parser.add_argument("--dataset", type=str, default=None, help="dataset name for DPO like 'crows-pairs'")
+parser.add_argument("--dpo_path", type=str, default=None,
+                    help="path to an existing DPO fine-tuned model; if provided, DPO training will be skipped")
 args = parser.parse_args()
 
 
@@ -42,116 +44,111 @@ def main():
 
 ###########################################################################
     if args.dataset == "crows-pairs":
-        from datasets import load_dataset
-        import pandas as pd
-        from transformers import AutoTokenizer, AutoModelForCausalLM
+        if args.dpo_path is not None:
+            print(f"Loading existing DPO model from {args.dpo_path}, skipping DPO training...")
+            from transformers import AutoModelForCausalLM
+            model = AutoModelForCausalLM.from_pretrained(args.dpo_path)
+        else:
+            dpo_output_dir = "./dpo_finetuned"
+            from datasets import load_dataset
+            import pandas as pd
+            from transformers import AutoTokenizer, AutoModelForCausalLM
 
+            print("Loading crows-pairs dataset for DPO...")
+            ds = load_dataset("BigScienceBiasEval/crows_pairs_multilingual")["test"]
+            pairs = []
 
+            for item in ds:
+                chosen = item["sent_less"]
+                rejected = item["sent_more"]
+                if item["stereo_antistereo"] == "anti-stereotype":
+                    chosen, rejected = rejected, chosen
 
-        print("Loading crows-pairs dataset for DPO...")
-        ds = load_dataset("BigScienceBiasEval/crows_pairs_multilingual")["test"]
-        pairs = []
+                pairs.append({
+                    "prompt": f"Bias type: {item['bias_type']}",
+                    "chosen": chosen,
+                    "rejected": rejected,
+                    "bias_type": item["bias_type"]
+                })
 
-        for item in ds:
-            chosen = item["sent_less"]
-            rejected = item["sent_more"]
-            if item["stereo_antistereo"] == "anti-stereotype":
-                chosen, rejected = rejected, chosen
+            pairs_df = pd.DataFrame(pairs)
+            print(pairs_df.head())
 
-            pairs.append({
-                "prompt": f"Bias type: {item['bias_type']}",  # minimal context
-                "chosen": chosen,
-                "rejected": rejected,
-                "bias_type": item["bias_type"]
-            })
+            # Load tokenizer and base model
+            tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
 
-        pairs_df = pd.DataFrame(pairs)
-        print(pairs_df.head())
+            model = AutoModelForCausalLM.from_pretrained(args.model_path)
 
-        # Load tokenizer and model
-        tokenizer = AutoTokenizer.from_pretrained(args.model_path)
-        if tokenizer.pad_token is None:
+            # Prepare data
+            train_data = [{
+                "prompt": row["prompt"],
+                "chosen": row["chosen"],
+                "rejected": row["rejected"]
+            } for _, row in pairs_df.iterrows()]
+
+            print("Starting DPO fine-tuning using TRLX...")
+
+            from trl import DPOTrainer, DPOConfig
+            from datasets import Dataset
+
+            training_args = DPOConfig(
+                output_dir=dpo_output_dir,
+                num_train_epochs=1,
+                per_device_train_batch_size=2,
+                per_device_eval_batch_size=2,
+                remove_unused_columns=False,
+                logging_steps=10,
+                gradient_accumulation_steps=1,
+                learning_rate=5e-6,
+                warmup_steps=2,
+                fp16=False,
+                save_steps=500,
+                eval_strategy="no",
+                report_to='none'
+            )
+
             tokenizer.pad_token = tokenizer.eos_token
+            train_data = Dataset.from_list(train_data)
 
-        model = AutoModelForCausalLM.from_pretrained(args.model_path)
+            def preprocess(example):
+                return {
+                    "prompt_ids": tokenizer(
+                        example["prompt"],
+                        truncation=True,
+                        padding="max_length",
+                        max_length=512
+                    )["input_ids"],
+                    "chosen_ids": tokenizer(
+                        example["chosen"],
+                        truncation=True,
+                        padding="max_length",
+                        max_length=512
+                    )["input_ids"],
+                    "rejected_ids": tokenizer(
+                        example["rejected"],
+                        truncation=True,
+                        padding="max_length",
+                        max_length=512
+                    )["input_ids"],
+                }
 
-        # Convert dataset to dict
-        train_data = [{
-            "prompt": row["prompt"],
-            "chosen": row["chosen"],
-            "rejected": row["rejected"]
-        } for _, row in pairs_df.iterrows()]
+            train_data = train_data.map(preprocess, batched=False)
 
-        print("Starting DPO fine-tuning using TRLX...")
+            trainer = DPOTrainer(
+                model=model,
+                ref_model=None,
+                args=training_args,
+                processing_class=tokenizer,
+                train_dataset=train_data,
+                eval_dataset=None
+            )
 
-        from trl import DPOTrainer, DPOConfig
+            trainer.train()
+            model.save_pretrained(dpo_output_dir)
+            print("DPO fine-tuning complete. Proceeding to quantization...")
 
-        # Define DPO training config
-        training_args = DPOConfig(
-            output_dir="./dpo_finetuned",
-            num_train_epochs=1,
-            per_device_train_batch_size=2,
-            per_device_eval_batch_size=2,
-            remove_unused_columns=False,
-            logging_steps=10,
-            gradient_accumulation_steps=1,
-            learning_rate=5e-6,
-            warmup_steps=2,
-            fp16=False,
-            save_steps=500,
-            eval_strategy="no",  # <-- disable evaluation
-            report_to='none'
-        )
-
-        # Make sure tokenizer has a pad token
-        tokenizer.pad_token = tokenizer.eos_token
-
-        from datasets import Dataset
-
-        # Convert list of dicts to Dataset
-        train_data = Dataset.from_list(train_data)
-
-        # Tokenize each example based on 'prompt', 'chosen', 'rejected'
-        def preprocess(example):
-            return {
-                "prompt_ids": tokenizer(
-                    example["prompt"],
-                    truncation=True,
-                    padding="max_length",
-                    max_length=512
-                )["input_ids"],
-                "chosen_ids": tokenizer(
-                    example["chosen"],
-                    truncation=True,
-                    padding="max_length",
-                    max_length=512
-                )["input_ids"],
-                "rejected_ids": tokenizer(
-                    example["rejected"],
-                    truncation=True,
-                    padding="max_length",
-                    max_length=512
-                )["input_ids"],
-            }
-
-        train_data = train_data.map(preprocess, batched=False)  # batched=False for individual dicts
-
-        # Initialize DPOTrainer
-        trainer = DPOTrainer(
-            model=model,
-            ref_model=None,
-            args=training_args,
-            processing_class=tokenizer,
-            train_dataset=train_data,
-            eval_dataset=None
-        )        
-
-        # Train
-        trainer.train()
-
-        # Save the fine-tuned model
-        model.save_pretrained("./dpo_finetuned")
-        print("DPO fine-tuning complete. Proceeding to quantization...")
 
 
 ###########################################################################
