@@ -48,6 +48,9 @@ def main():
             print(f"Loading existing DPO model from {args.dpo_path}, skipping DPO training...")
             from transformers import AutoModelForCausalLM
             model = AutoModelForCausalLM.from_pretrained(args.dpo_path)
+            tokenizer = AutoTokenizer.from_pretrained(args.dpo_path)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token   
         else:
             dpo_output_dir = "./dpo_finetuned"
             from datasets import load_dataset
@@ -147,6 +150,7 @@ def main():
 
             trainer.train()
             model.save_pretrained(dpo_output_dir)
+            tokenizer.save_pretrained(dpo_output_dir)
             print("DPO fine-tuning complete. Proceeding to quantization...")
 
 
@@ -163,7 +167,7 @@ def main():
 
 
     # evaluation
-    lm_eval_model = LMEvalAdaptor(args.model_path, model, enc, 1)
+    lm_eval_model = LMEvalAdaptor(args.model_path, model, tokenizer, 1)
 
 
     if args.tasks is not None:
