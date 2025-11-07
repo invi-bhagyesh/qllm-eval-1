@@ -23,7 +23,7 @@ parser.add_argument("--a_bit", type=int, default=16)
 parser.add_argument("--kv_group_size", type=int, default=128)
 parser.add_argument("--kv_bit", type=int, default=16)
 parser.add_argument("--dataset", type=str, default=None, help="dataset name for DPO like 'crows-pairs'")
-parser.add_argument("--type", type=str, require=True, default=None, help="dataset name for DPO like 'crows-pairs'")
+parser.add_argument("--type", type=str, required=True, default=None, help="dataset name for DPO like 'crows-pairs'")
 parser.add_argument("--dpo_path", type=str, default=None,
                     help="path to an existing DPO fine-tuned model; if provided, DPO training will be skipped")
 args = parser.parse_args()
