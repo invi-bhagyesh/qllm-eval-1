@@ -54,7 +54,7 @@ def main():
         else:
             model, tokenizer = build_model_and_enc(args.model_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
 
-            dpo_output_dir = f"./dpo_finetuned_{tasks}"
+            dpo_output_dir = f"./dpo_finetuned_{args.tasks}"
             from datasets import load_dataset
             import pandas as pd
             from transformers import AutoTokenizer, AutoModelForCausalLM
