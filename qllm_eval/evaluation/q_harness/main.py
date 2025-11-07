@@ -23,6 +23,7 @@ parser.add_argument("--a_bit", type=int, default=16)
 parser.add_argument("--kv_group_size", type=int, default=128)
 parser.add_argument("--kv_bit", type=int, default=16)
 parser.add_argument("--dataset", type=str, default=None, help="dataset name for DPO like 'crows-pairs'")
+parser.add_argument("--type", type=str, require=True, default=None, help="dataset name for DPO like 'crows-pairs'")
 parser.add_argument("--dpo_path", type=str, default=None,
                     help="path to an existing DPO fine-tuned model; if provided, DPO training will be skipped")
 args = parser.parse_args()
@@ -49,8 +50,6 @@ def main():
             from transformers import AutoModelForCausalLM
             from transformers import AutoTokenizer, AutoModelForCausalLM
             model, tokenizer = build_model_and_enc(args.dpo_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
-            # model = AutoModelForCausalLM.from_pretrained(args.dpo_path)
-            # tokenizer = AutoTokenizer.from_pretrained(args.dpo_path)
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token   
         else:
@@ -62,7 +61,7 @@ def main():
             from transformers import AutoTokenizer, AutoModelForCausalLM
 
             print("Loading crows-pairs dataset for DPO...")
-            ds = load_dataset("BigScienceBiasEval/crows_pairs_multilingual")["test"]
+            ds = load_dataset("BigScienceBiasEval/crows_pairs_multilingual")["test"].filter(lambda x: x["bias_type"] == type)
             pairs = []
 
             for item in ds:
