@@ -40,7 +40,7 @@ def main():
 
 
     # a hack here to auto set model group
-    model, enc = build_model_and_enc(args.model_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
+    # model, tokenizer = build_model_and_enc(args.model_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
 
 ###########################################################################
     if args.dataset == "crows-pairs":
@@ -48,12 +48,14 @@ def main():
             print(f"Loading existing DPO model from {args.dpo_path}, skipping DPO training...")
             from transformers import AutoModelForCausalLM
             from transformers import AutoTokenizer, AutoModelForCausalLM
-
-            model = AutoModelForCausalLM.from_pretrained(args.dpo_path)
-            tokenizer = AutoTokenizer.from_pretrained(args.dpo_path)
+            model, tokenizer = build_model_and_enc(args.dpo_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
+            # model = AutoModelForCausalLM.from_pretrained(args.dpo_path)
+            # tokenizer = AutoTokenizer.from_pretrained(args.dpo_path)
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token   
         else:
+            model, tokenizer = build_model_and_enc(args.model_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
+
             dpo_output_dir = "./dpo_finetuned"
             from datasets import load_dataset
             import pandas as pd
