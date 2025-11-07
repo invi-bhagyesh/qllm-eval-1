@@ -183,8 +183,7 @@ def main():
             cache_requests=None,
             num_fewshot=0,
         )
-        print(results)
-        print(evaluator.make_table(results))
+
         for task_name in task_names:
             output_path = "{}/{}/kv_{}_w_{}_a_{}.jsonl".format(task_name, args.model_path, args.kv_bit, args.w_bit, args.a_bit)
             print("* Output: ", output_path)
