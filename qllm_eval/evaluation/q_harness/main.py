@@ -138,15 +138,23 @@ def main():
                 dataset_num_proc=1,
             )
 
-            # Create DPO trainer
+            # Load a frozen reference model from the *base* checkpoint
+            ref_model = AutoModelForCausalLM.from_pretrained(
+                args.model_path,
+                trust_remote_code=True,
+                torch_dtype=torch.float32
+            )
+            ref_model.requires_grad_(False)
+
             trainer = DPOTrainer(
                 model=model,
-                ref_model=None,
+                ref_model=ref_model,
                 args=training_args,
                 processing_class=tokenizer,
                 train_dataset=train_data,
                 eval_dataset=None,
             )
+
 
             # Train the model
             trainer.train()
@@ -158,7 +166,7 @@ def main():
             # Save the fine-tuned model
             model.save_pretrained(dpo_output_dir)
             tokenizer.save_pretrained(dpo_output_dir)
-            print("✅ DPO fine-tuning complete on Anthropic dataset. Proceeding to quantization...")
+            print(" DPO fine-tuning complete on Anthropic dataset. Proceeding to quantization...")
 
             # Load the fine-tuned model for quantization
             model, tokenizer = build_model_and_enc(dpo_output_dir, args.use_flash_attn, args.kv_bit, args.kv_group_size)
