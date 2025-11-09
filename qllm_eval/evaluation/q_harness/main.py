@@ -1,8 +1,10 @@
 import os
 import json
 import argparse
-import datasets  # Add this import
+import datasets
 import sys
+import torch  # added
+import pandas as pd
 
 from qllm_eval.quantization.quant_wrapper import quantize_model
 from qllm_eval.utils import build_model_and_enc
@@ -22,27 +24,21 @@ parser.add_argument("--a_group_size", type=int, default=128)
 parser.add_argument("--a_bit", type=int, default=16)
 parser.add_argument("--kv_group_size", type=int, default=128)
 parser.add_argument("--kv_bit", type=int, default=16)
-parser.add_argument("--dataset", type=str, default=None, help="dataset name for DPO like 'crows-pairs'")
+parser.add_argument("--dataset", type=str, default=None, help="dataset name for DPO like 'anthropic'")
 parser.add_argument("--dpo_path", type=str, default=None,
                     help="path to an existing DPO fine-tuned model; if provided, DPO training will be skipped")
 args = parser.parse_args()
 
 
-
 def main():
-    # Set trust_remote_code globally for datasets
-    datasets.config.HF_DATASETS_TRUST_REMOTE_CODE = True  # Add this line
-    
+    datasets.config.HF_DATASETS_TRUST_REMOTE_CODE = True
+
     print("* Quantization Format: kv_{}_w_{}_a_{}".format(args.kv_bit, args.w_bit, args.a_bit))
     if 'falcon' in args.model_path.lower():
         args.kv_group_size = 64
         args.w_group_size = 64
 
-
-    # a hack here to auto set model group
-    # model, tokenizer = build_model_and_enc(args.model_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
-
-###########################################################################
+    ###########################################################################
     if args.dataset == "anthropic":
         if args.dpo_path is not None:
             print(f"Loading existing DPO model from {args.dpo_path}, skipping DPO training...")
@@ -53,15 +49,13 @@ def main():
         else:
             model, tokenizer = build_model_and_enc(args.model_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
 
-            dpo_output_dir = f"./dpo_finetuned_anthropic"
+            dpo_output_dir = "./dpo_finetuned_anthropic"
             from datasets import load_dataset
-            import pandas as pd
             from transformers import AutoTokenizer, AutoModelForCausalLM
 
             print("Loading Anthropic HH-RLHF dataset for DPO...")
-            ds = load_dataset("Anthropic/hh-rlhf", split="train[:2%]")  # use small subset for demo
+            ds = load_dataset("Anthropic/hh-rlhf", split="train[:2%]")
 
-            # Convert dataset to chosen/rejected format
             pairs = []
             for item in ds:
                 pairs.append({
@@ -73,13 +67,11 @@ def main():
             pairs_df = pd.DataFrame(pairs)
             print(pairs_df.head())
 
-            # Load tokenizer and base model
             tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
             model = AutoModelForCausalLM.from_pretrained(args.model_path, trust_remote_code=True)
 
-            # Convert to Dataset
             from datasets import Dataset
             train_data = Dataset.from_pandas(pairs_df)
 
@@ -127,6 +119,18 @@ def main():
 
             train_data = train_data.map(preprocess, batched=False)
 
+            # cast to correct dtype
+            def to_long(example):
+                example["prompt_ids"] = torch.tensor(example["prompt_ids"], dtype=torch.long)
+                example["chosen_ids"] = torch.tensor(example["chosen_ids"], dtype=torch.long)
+                example["rejected_ids"] = torch.tensor(example["rejected_ids"], dtype=torch.long)
+                return example
+
+            train_data = train_data.map(to_long)
+            train_data.set_format(type="torch", columns=["prompt_ids", "chosen_ids", "rejected_ids"])
+
+            model = model.to(torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
+
             trainer = DPOTrainer(
                 model=model,
                 ref_model=None,
@@ -141,29 +145,19 @@ def main():
             tokenizer.save_pretrained(dpo_output_dir)
             print("✅ DPO fine-tuning complete on Anthropic dataset. Proceeding to quantization...")
 
-###########################################################################
-
+    ###########################################################################
     else:
         model, tokenizer = build_model_and_enc(args.model_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
 
-###########################################################################
+    ###########################################################################
     # quantize model
     model = quantize_model(model, args)
-
-
-    # # save the quantized model
-    # if args.output_path:
-    #     model.save_pretrained(args.output_path, safe_serialization=False)
-    #     enc.save_pretrained(args.output_path)
-
 
     # evaluation
     lm_eval_model = LMEvalAdaptor(args.model_path, model, tokenizer, 1)
 
-
     if args.tasks is not None:
         task_names = args.tasks.split(",")
-
 
         results = evaluator.simple_evaluate(
             model=lm_eval_model,
@@ -174,13 +168,11 @@ def main():
         )
 
         for task_name in task_names:
-            output_path = "{}/{}/kv_{}_w_{}_a_{}.jsonl".format(task_name, args.model_path, args.kv_bit, args.w_bit, args.a_bit)
-            print("* Output: ", output_path)
-            if not os.path.exists("{}/{}".format(task_name, args.model_path)):
-                os.makedirs("{}/{}".format(task_name, args.model_path))
+            output_path = f"{task_name}/{args.model_path}/kv_{args.kv_bit}_w_{args.w_bit}_a_{args.a_bit}.jsonl"
+            print("* Output:", output_path)
+            os.makedirs(f"{task_name}/{args.model_path}", exist_ok=True)
             with open(output_path, 'w') as f:
                 f.write(json.dumps(results['results'][task_name]) + "\n")
-
 
 
 if __name__ == "__main__":
