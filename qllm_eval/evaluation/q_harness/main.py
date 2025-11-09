@@ -54,7 +54,7 @@ def main():
             dpo_output_dir = "./dpo_finetuned_anthropic"
 
             print("Loading Anthropic HH-RLHF dataset for DPO...")
-            ds = load_dataset("Anthropic/hh-rlhf", split="train[:2%]")
+            ds = load_dataset("Anthropic/hh-rlhf", split="train[:10%]")
 
             # Load tokenizer and model first
             tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
