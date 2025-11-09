@@ -145,8 +145,6 @@ def main():
                 max_prompt_length=256,
                 precompute_ref_log_probs=False,
                 dataset_num_proc=1,
-                # save_safetensors=True,
-                save_optimizer=False,      # <- add this
             )
 
             # Load a frozen reference model from the *base* checkpoint
