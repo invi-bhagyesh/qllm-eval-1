@@ -56,10 +56,18 @@ def main():
             print("Loading Anthropic HH-RLHF dataset for DPO...")
             ds = load_dataset("Anthropic/hh-rlhf", split="train[:2%]")
 
+            # Load tokenizer and model first
+            tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            model = AutoModelForCausalLM.from_pretrained(args.model_path, trust_remote_code=True)
+
+            # Prepare data in the format DPO expects (keep original text fields)
             pairs = []
             for item in ds:
                 pairs.append({
-                    "prompt": item["input"] if "input" in item else "",
+                    "prompt": item.get("input", ""),
                     "chosen": item["chosen"],
                     "rejected": item["rejected"]
                 })
@@ -68,49 +76,7 @@ def main():
 
             print("Starting DPO fine-tuning using TRL...")
 
-            # Load tokenizer and model
-            tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token
-            
-            model = AutoModelForCausalLM.from_pretrained(args.model_path, trust_remote_code=True)
-
-            # Tokenization function for DPO
-            def encode_texts(example):
-                # Tokenize prompt, chosen, and rejected
-                prompt_tokenized = tokenizer(
-                    example["prompt"], 
-                    truncation=True, 
-                    max_length=512
-                )
-                chosen_tokenized = tokenizer(
-                    example["chosen"], 
-                    truncation=True, 
-                    max_length=512
-                )
-                rejected_tokenized = tokenizer(
-                    example["rejected"], 
-                    truncation=True, 
-                    max_length=512
-                )
-                
-                # DPOTrainer expects these exact field names
-                return {
-                    "prompt": example["prompt"],
-                    "chosen": example["chosen"],
-                    "rejected": example["rejected"],
-                    "prompt_input_ids": prompt_tokenized["input_ids"],
-                    "prompt_attention_mask": prompt_tokenized["attention_mask"],
-                    "chosen_input_ids": chosen_tokenized["input_ids"],
-                    "chosen_attention_mask": chosen_tokenized["attention_mask"],
-                    "rejected_input_ids": rejected_tokenized["input_ids"],
-                    "rejected_attention_mask": rejected_tokenized["attention_mask"],
-                }
-
-            # Apply the encoding
-            train_data = train_data.map(encode_texts, remove_columns=train_data.column_names)
-
-            # Configure DPO training
+            # Configure DPO training with preprocess_logits_for_metrics to ensure correct dtypes
             training_args = DPOConfig(
                 output_dir=dpo_output_dir,
                 num_train_epochs=1,
@@ -122,21 +88,25 @@ def main():
                 learning_rate=5e-6,
                 warmup_steps=2,
                 fp16=False,
+                bf16=False,  # Explicitly disable bf16
                 save_steps=500,
                 eval_strategy="no",
                 report_to='none',
                 max_length=512,
-                max_prompt_length=512,
+                max_prompt_length=256,
+                # These are important for handling tokenization correctly
+                precompute_ref_log_probs=False,
+                dataset_num_proc=1,
             )
 
-            # Create DPO trainer
+            # Create DPO trainer - let it handle all tokenization internally
             trainer = DPOTrainer(
                 model=model,
                 ref_model=None,
                 args=training_args,
                 processing_class=tokenizer,
                 train_dataset=train_data,
-                eval_dataset=None
+                eval_dataset=None,
             )
 
             # Train the model
@@ -145,7 +115,7 @@ def main():
             # Save the fine-tuned model
             model.save_pretrained(dpo_output_dir)
             tokenizer.save_pretrained(dpo_output_dir)
-            print("✅ DPO fine-tuning complete on Anthropic dataset. Proceeding to quantization...")
+            print(" DPO fine-tuning complete on Anthropic dataset. Proceeding to quantization...")
 
             # Load the fine-tuned model for quantization
             model, tokenizer = build_model_and_enc(dpo_output_dir, args.use_flash_attn, args.kv_bit, args.kv_group_size)
