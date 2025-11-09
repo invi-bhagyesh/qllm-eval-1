@@ -61,7 +61,11 @@ def main():
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
             
-            model = AutoModelForCausalLM.from_pretrained(args.model_path, trust_remote_code=True)
+            model = AutoModelForCausalLM.from_pretrained(
+                args.model_path, 
+                trust_remote_code=True,
+                torch_dtype=torch.float32  # Use float32 to avoid dtype issues
+            )
 
             # Prepare data in the format DPO expects (keep original text fields)
             pairs = []
@@ -76,7 +80,24 @@ def main():
 
             print("Starting DPO fine-tuning using TRL...")
 
-            # Configure DPO training with preprocess_logits_for_metrics to ensure correct dtypes
+            # Patch DPOTrainer to fix dtype issue
+            from trl.trainer.dpo_trainer import DPOTrainer as OriginalDPOTrainer
+            
+            class FixedDPOTrainer(OriginalDPOTrainer):
+                def concatenated_forward(self, model, batch):
+                    """Override to ensure input_ids are Long tensors"""
+                    # Ensure all input tensors are the correct dtype
+                    if "concatenated_input_ids" in batch:
+                        batch["concatenated_input_ids"] = batch["concatenated_input_ids"].long()
+                    if "concatenated_attention_mask" in batch:
+                        batch["concatenated_attention_mask"] = batch["concatenated_attention_mask"].long()
+                    if "concatenated_labels" in batch:
+                        batch["concatenated_labels"] = batch["concatenated_labels"].long()
+                    
+                    # Call the parent method
+                    return super().concatenated_forward(model, batch)
+            
+            # Configure DPO training
             training_args = DPOConfig(
                 output_dir=dpo_output_dir,
                 num_train_epochs=1,
@@ -88,19 +109,18 @@ def main():
                 learning_rate=5e-6,
                 warmup_steps=2,
                 fp16=False,
-                bf16=False,  # Explicitly disable bf16
+                bf16=False,
                 save_steps=500,
                 eval_strategy="no",
                 report_to='none',
                 max_length=512,
                 max_prompt_length=256,
-                # These are important for handling tokenization correctly
                 precompute_ref_log_probs=False,
                 dataset_num_proc=1,
             )
 
-            # Create DPO trainer - let it handle all tokenization internally
-            trainer = DPOTrainer(
+            # Create DPO trainer with the patched version
+            trainer = FixedDPOTrainer(
                 model=model,
                 ref_model=None,
                 args=training_args,
@@ -115,7 +135,7 @@ def main():
             # Save the fine-tuned model
             model.save_pretrained(dpo_output_dir)
             tokenizer.save_pretrained(dpo_output_dir)
-            print(" DPO fine-tuning complete on Anthropic dataset. Proceeding to quantization...")
+            print("✅ DPO fine-tuning complete on Anthropic dataset. Proceeding to quantization...")
 
             # Load the fine-tuned model for quantization
             model, tokenizer = build_model_and_enc(dpo_output_dir, args.use_flash_attn, args.kv_bit, args.kv_group_size)
