@@ -393,6 +393,113 @@ def main():
             tokenizer.save_pretrained(dpo_output_dir)
             print(" DPO fine-tuning complete. Proceeding to quantization...")
 
+    elif args.dataset == "discrim-eval":
+        if args.dpo_path is not None:
+            print(f"Loading existing DPO model from {args.dpo_path}, skipping DPO training...")
+            from transformers import AutoTokenizer, AutoModelForCausalLM
+            model, tokenizer = build_model_and_enc(args.dpo_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+        else:
+            model, tokenizer = build_model_and_enc(args.model_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
+
+            dpo_output_dir = f"./dpo_finetuned_{args.tasks}"
+            from datasets import load_dataset
+            import pandas as pd
+            from transformers import AutoTokenizer, AutoModelForCausalLM
+
+            print("Loading discrim-eval dataset for DPO pairing...")
+            ds = load_dataset("Anthropic/discrim-eval", "explicit")["train"]  # or appropriate split
+            df = pd.DataFrame(ds)
+            print(f"Loaded {len(df)} rows, unique races: {df['race'].unique()}, genders: {df['gender'].unique()}")
+
+            pairs = []
+
+            # Group by decision_question_id so that each group contains multiple demographic variants
+            for qid, group in df.groupby("decision_question_id"):
+                if len(group) < 2:
+                    continue  # skip if no contrastive versions
+
+                # pick one as "neutral" or baseline — here we use "white" or "male" as reference if available
+                baseline = group[group["race"].str.lower().eq("white")]
+                if len(baseline) == 0:
+                    baseline = group.iloc[[0]]  # fallback
+
+                baseline_row = baseline.iloc[0]
+                prompt = baseline_row["filled_template"]
+                chosen = f"The response should be based only on the medical and ethical facts, not race or gender."
+
+                # all others are biased variants to reject
+                for _, row in group.iterrows():
+                    if row["filled_template"] == prompt:
+                        continue
+                    rejected = f"The response is influenced by demographic cues such as race ({row['race']}) or gender ({row['gender']})."
+                    pairs.append({
+                        "prompt": prompt,
+                        "chosen": chosen,
+                        "rejected": rejected,
+                        "race": row["race"],
+                        "gender": row["gender"],
+                        "qid": qid
+                    })
+
+            pairs_df = pd.DataFrame(pairs)
+            print(f" Constructed {len(pairs_df)} Discrim-Eval DPO pairs from {df['decision_question_id'].nunique()} question groups")
+            print(pairs_df.head())
+
+            if len(pairs_df) == 0:
+                raise ValueError("No valid pairs formed — check decision_question_id or race fields.")
+
+            # Load tokenizer and base model
+            tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+
+            model = AutoModelForCausalLM.from_pretrained(args.model_path)
+
+            # Prepare DPO training data
+            train_data = [{
+                "prompt": row["prompt"],
+                "chosen": row["chosen"],
+                "rejected": row["rejected"]
+            } for _, row in pairs_df.iterrows()]
+
+            print("Starting DPO fine-tuning using TRLX...")
+
+            from trl import DPOTrainer, DPOConfig
+            from datasets import Dataset
+
+            training_args = DPOConfig(
+                output_dir=dpo_output_dir,
+                num_train_epochs=1,
+                per_device_train_batch_size=2,
+                per_device_eval_batch_size=2,
+                remove_unused_columns=False,
+                logging_steps=10,
+                gradient_accumulation_steps=1,
+                learning_rate=5e-6,
+                warmup_steps=2,
+                fp16=False,
+                save_steps=500,
+                eval_strategy="no",
+                report_to='none'
+            )
+
+            train_data = Dataset.from_list(train_data)
+
+            trainer = DPOTrainer(
+                model=model,
+                ref_model=None,
+                args=training_args,
+                processing_class=tokenizer,
+                train_dataset=train_data,
+                eval_dataset=None
+            )
+
+            trainer.train()
+            model.save_pretrained(dpo_output_dir)
+            tokenizer.save_pretrained(dpo_output_dir)
+            print(" DPO fine-tuning complete. Proceeding to quantization...")
 
             
 ###########################################################################
