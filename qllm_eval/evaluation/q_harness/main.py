@@ -500,7 +500,7 @@ def main():
             model.save_pretrained(dpo_output_dir)
             tokenizer.save_pretrained(dpo_output_dir)
             print(" DPO fine-tuning complete. Proceeding to quantization...")
-    elif:
+    else:
         model, tokenizer = build_model_and_enc(args.model_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
 
 ###########################################################################
