@@ -64,16 +64,8 @@ def main():
                     "rejected": item["rejected"]
                 })
 
-            pairs_df = pd.DataFrame(pairs)
-            print(pairs_df.head())
-
-            tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token
-            model = AutoModelForCausalLM.from_pretrained(args.model_path, trust_remote_code=True)
-
             from datasets import Dataset
-            train_data = Dataset.from_pandas(pairs_df)
+            train_data = Dataset.from_pandas(pd.DataFrame(pairs))
 
             print("Starting DPO fine-tuning using TRL...")
 
@@ -95,38 +87,29 @@ def main():
                 report_to='none'
             )
 
-            def preprocess(example):
-                return {
-                    "prompt_ids": tokenizer(
-                        example["prompt"],
-                        truncation=True,
-                        padding="max_length",
-                        max_length=512
-                    )["input_ids"],
-                    "chosen_ids": tokenizer(
-                        example["chosen"],
-                        truncation=True,
-                        padding="max_length",
-                        max_length=512
-                    )["input_ids"],
-                    "rejected_ids": tokenizer(
-                        example["rejected"],
-                        truncation=True,
-                        padding="max_length",
-                        max_length=512
-                    )["input_ids"],
-                }
+            tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            model = AutoModelForCausalLM.from_pretrained(args.model_path, trust_remote_code=True)
 
-            train_data = train_data.map(preprocess, batched=False)
+            # Tokenize and cast to torch.long
+            def encode_texts(example):
+                prompt_ids = tokenizer(
+                    example["prompt"], truncation=True, padding="max_length", max_length=512
+                )["input_ids"]
+                chosen_ids = tokenizer(
+                    example["chosen"], truncation=True, padding="max_length", max_length=512
+                )["input_ids"]
+                rejected_ids = tokenizer(
+                    example["rejected"], truncation=True, padding="max_length", max_length=512
+                )["input_ids"]
 
-            # cast to correct dtype
-            def to_long(example):
-                example["prompt_ids"] = torch.tensor(example["prompt_ids"], dtype=torch.long)
-                example["chosen_ids"] = torch.tensor(example["chosen_ids"], dtype=torch.long)
-                example["rejected_ids"] = torch.tensor(example["rejected_ids"], dtype=torch.long)
+                example["prompt_ids"] = torch.tensor(prompt_ids, dtype=torch.long)
+                example["chosen_ids"] = torch.tensor(chosen_ids, dtype=torch.long)
+                example["rejected_ids"] = torch.tensor(rejected_ids, dtype=torch.long)
                 return example
 
-            train_data = train_data.map(to_long)
+            train_data = train_data.map(encode_texts)
             train_data.set_format(type="torch", columns=["prompt_ids", "chosen_ids", "rejected_ids"])
 
             model = model.to(torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
