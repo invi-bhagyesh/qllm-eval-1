@@ -409,7 +409,7 @@ def main():
             from transformers import AutoTokenizer, AutoModelForCausalLM
 
             print("Loading discrim-eval dataset for DPO pairing...")
-            ds = load_dataset("Anthropic/discrim-eval", "implcit")["train"]  # or appropriate split
+            ds = load_dataset("Anthropic/discrim-eval", "implicit")["train"]  # or appropriate split
             df = pd.DataFrame(ds)
             print(f"Loaded {len(df)} rows, unique races: {df['race'].unique()}, genders: {df['gender'].unique()}")
 
