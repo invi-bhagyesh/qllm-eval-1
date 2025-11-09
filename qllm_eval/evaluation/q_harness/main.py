@@ -298,8 +298,7 @@ def main():
             from transformers import AutoTokenizer, AutoModelForCausalLM
 
             print("Loading Winogender dataset for DPO...")
-            # You can replace this with your local CSV if needed:
-            ds = load_dataset("winogender", split="train")  # or your own processed HuggingFace dataset
+            ds = load_dataset("oskarvanderwal/winogender", split="all")  # or your own processed HuggingFace dataset
             df = pd.DataFrame(ds)
 
             pairs = []
