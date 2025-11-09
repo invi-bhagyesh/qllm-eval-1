@@ -30,6 +30,31 @@ parser.add_argument("--dpo_path", type=str, default=None,
 args = parser.parse_args()
 
 
+def create_dtype_patch(model):
+    """Create a patched forward function for a model to ensure correct dtypes"""
+    original_forward = model.forward
+    
+    def patched_forward(input_ids=None, **kwargs):
+        # Ensure input_ids is long type
+        if input_ids is not None:
+            if not input_ids.dtype in [torch.long, torch.int, torch.int32, torch.int64]:
+                input_ids = input_ids.long()
+        
+        # Ensure attention_mask is also correct type if present
+        if 'attention_mask' in kwargs and kwargs['attention_mask'] is not None:
+            if not kwargs['attention_mask'].dtype in [torch.long, torch.int, torch.int32, torch.int64]:
+                kwargs['attention_mask'] = kwargs['attention_mask'].long()
+        
+        # Ensure labels is also correct type if present
+        if 'labels' in kwargs and kwargs['labels'] is not None:
+            if not kwargs['labels'].dtype in [torch.long, torch.int, torch.int32, torch.int64]:
+                kwargs['labels'] = kwargs['labels'].long()
+        
+        return original_forward(input_ids=input_ids, **kwargs)
+    
+    return original_forward, patched_forward
+
+
 def main():
     datasets.config.HF_DATASETS_TRUST_REMOTE_CODE = True
 
@@ -80,29 +105,9 @@ def main():
 
             print("Starting DPO fine-tuning using TRL...")
 
-            # Monkey patch the model's forward to ensure input_ids are always long
-            original_forward = model.forward
-            
-            def patched_forward(input_ids=None, **kwargs):
-                # Ensure input_ids is long type
-                if input_ids is not None:
-                    if not input_ids.dtype in [torch.long, torch.int, torch.int32, torch.int64]:
-                        input_ids = input_ids.long()
-                
-                # Ensure attention_mask is also correct type if present
-                if 'attention_mask' in kwargs and kwargs['attention_mask'] is not None:
-                    if not kwargs['attention_mask'].dtype in [torch.long, torch.int, torch.int32, torch.int64]:
-                        kwargs['attention_mask'] = kwargs['attention_mask'].long()
-                
-                # Ensure labels is also correct type if present
-                if 'labels' in kwargs and kwargs['labels'] is not None:
-                    if not kwargs['labels'].dtype in [torch.long, torch.int, torch.int32, torch.int64]:
-                        kwargs['labels'] = kwargs['labels'].long()
-                
-                return original_forward(input_ids=input_ids, **kwargs)
-            
-            # Apply the patch
-            model.forward = patched_forward
+            # Patch the main model's forward
+            original_model_forward, patched_model_forward = create_dtype_patch(model)
+            model.forward = patched_model_forward
             
             # Also patch torch.gather to ensure index is always long
             import torch.nn.functional as F
@@ -145,7 +150,12 @@ def main():
                 torch_dtype=torch.float32
             )
             ref_model.requires_grad_(False)
+            
+            # Patch the reference model's forward as well
+            original_ref_forward, patched_ref_forward = create_dtype_patch(ref_model)
+            ref_model.forward = patched_ref_forward
 
+            # Create DPO trainer
             trainer = DPOTrainer(
                 model=model,
                 ref_model=ref_model,
@@ -155,12 +165,12 @@ def main():
                 eval_dataset=None,
             )
 
-
             # Train the model
             trainer.train()
             
-            # Restore original forward and gather before saving
-            model.forward = original_forward
+            # Restore original forwards and gather before saving
+            model.forward = original_model_forward
+            ref_model.forward = original_ref_forward
             torch.gather = original_gather
             
             # Save the fine-tuned model
