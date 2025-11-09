@@ -79,7 +79,7 @@ def main():
             dpo_output_dir = "./dpo_finetuned_anthropic"
 
             print("Loading Anthropic HH-RLHF dataset for DPO...")
-            ds = load_dataset("Anthropic/hh-rlhf", split="train[:10%]")
+            ds = load_dataset("PKU-Alignment/PKU-SafeRLHFf", split="train[:10%]")
 
             # Load tokenizer and model first
             tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
@@ -133,14 +133,20 @@ def main():
                 learning_rate=5e-6,
                 warmup_steps=2,
                 fp16=False,
-                bf16=False,
-                save_steps=500,
+                bf16=False, 
+                save_strategy="epoch",     # save only after the last epoch
+                save_total_limit=1,        # keep only the last checkpoint
+                save_safetensors=True,
+                save_optimizer=False,
+                save_on_each_node=False,
                 eval_strategy="no",
                 report_to='none',
                 max_length=512,
                 max_prompt_length=256,
                 precompute_ref_log_probs=False,
                 dataset_num_proc=1,
+                save_safetensors=True,
+                save_optimizer=False,      # <- add this
             )
 
             # Load a frozen reference model from the *base* checkpoint
