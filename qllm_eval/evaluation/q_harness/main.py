@@ -79,7 +79,7 @@ def main():
             dpo_output_dir = "./dpo_finetuned_anthropic"
 
             print("Loading Anthropic HH-RLHF dataset for DPO...")
-            ds = load_dataset("PKU-Alignment/PKU-SafeRLHFf", split="train[:10%]")
+            ds = load_dataset("Anthropic/hh-rlhf", split="train[:10%]")
 
             # Load tokenizer and model first
             tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
@@ -145,7 +145,7 @@ def main():
                 max_prompt_length=256,
                 precompute_ref_log_probs=False,
                 dataset_num_proc=1,
-                save_safetensors=True,
+                # save_safetensors=True,
                 save_optimizer=False,      # <- add this
             )
 
@@ -186,6 +186,8 @@ def main():
 
             # Load the fine-tuned model for quantization
             model, tokenizer = build_model_and_enc(dpo_output_dir, args.use_flash_attn, args.kv_bit, args.kv_group_size)
+
+    elif args.dataset =="pku":
 
     ###########################################################################
     else:
