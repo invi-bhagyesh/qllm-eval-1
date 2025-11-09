@@ -94,10 +94,27 @@ def main():
                     if not kwargs['attention_mask'].dtype in [torch.long, torch.int, torch.int32, torch.int64]:
                         kwargs['attention_mask'] = kwargs['attention_mask'].long()
                 
+                # Ensure labels is also correct type if present
+                if 'labels' in kwargs and kwargs['labels'] is not None:
+                    if not kwargs['labels'].dtype in [torch.long, torch.int, torch.int32, torch.int64]:
+                        kwargs['labels'] = kwargs['labels'].long()
+                
                 return original_forward(input_ids=input_ids, **kwargs)
             
             # Apply the patch
             model.forward = patched_forward
+            
+            # Also patch torch.gather to ensure index is always long
+            import torch.nn.functional as F
+            original_gather = torch.gather
+            
+            def patched_gather(input, dim, index, **kwargs):
+                # Ensure index is long type for gather operations
+                if index is not None and not index.dtype in [torch.long, torch.int64]:
+                    index = index.long()
+                return original_gather(input, dim, index, **kwargs)
+            
+            torch.gather = patched_gather
             
             # Configure DPO training
             training_args = DPOConfig(
@@ -134,8 +151,9 @@ def main():
             # Train the model
             trainer.train()
             
-            # Restore original forward before saving
+            # Restore original forward and gather before saving
             model.forward = original_forward
+            torch.gather = original_gather
             
             # Save the fine-tuned model
             model.save_pretrained(dpo_output_dir)
