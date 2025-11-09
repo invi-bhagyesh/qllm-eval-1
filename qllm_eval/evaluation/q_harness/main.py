@@ -392,7 +392,7 @@ def main():
             model.save_pretrained(dpo_output_dir)
             tokenizer.save_pretrained(dpo_output_dir)
             print(" DPO fine-tuning complete. Proceeding to quantization...")
-
+###########################################################################
     elif args.dataset == "discrim-eval":
         if args.dpo_path is not None:
             print(f"Loading existing DPO model from {args.dpo_path}, skipping DPO training...")
@@ -500,8 +500,9 @@ def main():
             model.save_pretrained(dpo_output_dir)
             tokenizer.save_pretrained(dpo_output_dir)
             print(" DPO fine-tuning complete. Proceeding to quantization...")
+    elif:
+        model, tokenizer = build_model_and_enc(args.model_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
 
-            
 ###########################################################################
     # quantize model
     model = quantize_model(model, args)
