@@ -50,7 +50,6 @@ def main():
             from datasets import load_dataset, Dataset
             from transformers import AutoTokenizer, AutoModelForCausalLM
             from trl import DPOTrainer, DPOConfig
-            import torch.nn.functional as F
 
             dpo_output_dir = "./dpo_finetuned_anthropic"
 
@@ -81,60 +80,24 @@ def main():
 
             print("Starting DPO fine-tuning using TRL...")
 
-            # Comprehensive patch for DPOTrainer to fix dtype issue
-            from trl.trainer.dpo_trainer import DPOTrainer as OriginalDPOTrainer
+            # Monkey patch the model's forward to ensure input_ids are always long
+            original_forward = model.forward
             
-            class FixedDPOTrainer(OriginalDPOTrainer):
-                def concatenated_forward(self, model, batch):
-                    """Override to ensure input_ids are Long tensors"""
-                    # Get the concatenated inputs
-                    concatenated_batch = self.concatenated_inputs(
-                        batch,
-                        is_encoder_decoder=self.is_encoder_decoder,
-                        is_vision_model=self.is_vision_model,
-                        label_pad_token_id=self.label_pad_token_id,
-                        padding_value=self.padding_value,
-                        device=self.accelerator.device,
-                    )
-                    
-                    # Extract input_ids and ensure it's long type
-                    input_ids = concatenated_batch["concatenated_input_ids"].long()
-                    attention_mask = concatenated_batch.get("concatenated_attention_mask")
-                    if attention_mask is not None:
-                        attention_mask = attention_mask.long()
-                    
-                    # Prepare model kwargs
-                    model_kwargs = {}
-                    if attention_mask is not None:
-                        model_kwargs["attention_mask"] = attention_mask
-                    
-                    if self.is_encoder_decoder:
-                        decoder_input_ids = concatenated_batch.get("concatenated_decoder_input_ids")
-                        if decoder_input_ids is not None:
-                            model_kwargs["decoder_input_ids"] = decoder_input_ids.long()
-                        decoder_attention_mask = concatenated_batch.get("concatenated_decoder_attention_mask")
-                        if decoder_attention_mask is not None:
-                            model_kwargs["decoder_attention_mask"] = decoder_attention_mask.long()
-                    
-                    if self.is_vision_model:
-                        pixel_values = concatenated_batch.get("concatenated_pixel_values")
-                        pixel_attention_mask = concatenated_batch.get("concatenated_pixel_attention_mask")
-                        if pixel_values is not None:
-                            model_kwargs["pixel_values"] = pixel_values
-                        if pixel_attention_mask is not None:
-                            model_kwargs["pixel_attention_mask"] = pixel_attention_mask
-                    
-                    if self.aux_loss_enabled:
-                        model_kwargs["output_router_logits"] = True
-                    
-                    # Call model with corrected dtypes
-                    outputs = model(
-                        input_ids,
-                        **model_kwargs,
-                        use_cache=False,
-                    )
-                    
-                    return outputs
+            def patched_forward(input_ids=None, **kwargs):
+                # Ensure input_ids is long type
+                if input_ids is not None:
+                    if not input_ids.dtype in [torch.long, torch.int, torch.int32, torch.int64]:
+                        input_ids = input_ids.long()
+                
+                # Ensure attention_mask is also correct type if present
+                if 'attention_mask' in kwargs and kwargs['attention_mask'] is not None:
+                    if not kwargs['attention_mask'].dtype in [torch.long, torch.int, torch.int32, torch.int64]:
+                        kwargs['attention_mask'] = kwargs['attention_mask'].long()
+                
+                return original_forward(input_ids=input_ids, **kwargs)
+            
+            # Apply the patch
+            model.forward = patched_forward
             
             # Configure DPO training
             training_args = DPOConfig(
@@ -158,8 +121,8 @@ def main():
                 dataset_num_proc=1,
             )
 
-            # Create DPO trainer with the patched version
-            trainer = FixedDPOTrainer(
+            # Create DPO trainer
+            trainer = DPOTrainer(
                 model=model,
                 ref_model=None,
                 args=training_args,
@@ -170,6 +133,9 @@ def main():
 
             # Train the model
             trainer.train()
+            
+            # Restore original forward before saving
+            model.forward = original_forward
             
             # Save the fine-tuned model
             model.save_pretrained(dpo_output_dir)
