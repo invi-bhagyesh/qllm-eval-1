@@ -3,7 +3,7 @@ import json
 import argparse
 import datasets
 import sys
-import torch  # added
+import torch
 import pandas as pd
 
 from qllm_eval.quantization.quant_wrapper import quantize_model
@@ -47,11 +47,11 @@ def main():
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
         else:
-            model, tokenizer = build_model_and_enc(args.model_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
+            from datasets import load_dataset, Dataset
+            from transformers import AutoTokenizer, AutoModelForCausalLM
+            from trl import DPOTrainer, DPOConfig
 
             dpo_output_dir = "./dpo_finetuned_anthropic"
-            from datasets import load_dataset
-            from transformers import AutoTokenizer, AutoModelForCausalLM
 
             print("Loading Anthropic HH-RLHF dataset for DPO...")
             ds = load_dataset("Anthropic/hh-rlhf", split="train[:2%]")
@@ -64,13 +64,53 @@ def main():
                     "rejected": item["rejected"]
                 })
 
-            from datasets import Dataset
             train_data = Dataset.from_pandas(pd.DataFrame(pairs))
 
             print("Starting DPO fine-tuning using TRL...")
 
-            from trl import DPOTrainer, DPOConfig
+            # Load tokenizer and model
+            tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            model = AutoModelForCausalLM.from_pretrained(args.model_path, trust_remote_code=True)
 
+            # Tokenization function for DPO
+            def encode_texts(example):
+                # Tokenize prompt, chosen, and rejected
+                prompt_tokenized = tokenizer(
+                    example["prompt"], 
+                    truncation=True, 
+                    max_length=512
+                )
+                chosen_tokenized = tokenizer(
+                    example["chosen"], 
+                    truncation=True, 
+                    max_length=512
+                )
+                rejected_tokenized = tokenizer(
+                    example["rejected"], 
+                    truncation=True, 
+                    max_length=512
+                )
+                
+                # DPOTrainer expects these exact field names
+                return {
+                    "prompt": example["prompt"],
+                    "chosen": example["chosen"],
+                    "rejected": example["rejected"],
+                    "prompt_input_ids": prompt_tokenized["input_ids"],
+                    "prompt_attention_mask": prompt_tokenized["attention_mask"],
+                    "chosen_input_ids": chosen_tokenized["input_ids"],
+                    "chosen_attention_mask": chosen_tokenized["attention_mask"],
+                    "rejected_input_ids": rejected_tokenized["input_ids"],
+                    "rejected_attention_mask": rejected_tokenized["attention_mask"],
+                }
+
+            # Apply the encoding
+            train_data = train_data.map(encode_texts, remove_columns=train_data.column_names)
+
+            # Configure DPO training
             training_args = DPOConfig(
                 output_dir=dpo_output_dir,
                 num_train_epochs=1,
@@ -84,36 +124,12 @@ def main():
                 fp16=False,
                 save_steps=500,
                 eval_strategy="no",
-                report_to='none'
+                report_to='none',
+                max_length=512,
+                max_prompt_length=512,
             )
 
-            tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token
-            model = AutoModelForCausalLM.from_pretrained(args.model_path, trust_remote_code=True)
-
-            # Tokenize and cast to torch.long
-            def encode_texts(example):
-                prompt_ids = tokenizer(
-                    example["prompt"], truncation=True, padding="max_length", max_length=512
-                )["input_ids"]
-                chosen_ids = tokenizer(
-                    example["chosen"], truncation=True, padding="max_length", max_length=512
-                )["input_ids"]
-                rejected_ids = tokenizer(
-                    example["rejected"], truncation=True, padding="max_length", max_length=512
-                )["input_ids"]
-
-                example["prompt_ids"] = torch.tensor(prompt_ids, dtype=torch.long)
-                example["chosen_ids"] = torch.tensor(chosen_ids, dtype=torch.long)
-                example["rejected_ids"] = torch.tensor(rejected_ids, dtype=torch.long)
-                return example
-
-            train_data = train_data.map(encode_texts)
-            train_data.set_format(type="torch", columns=["prompt_ids", "chosen_ids", "rejected_ids"])
-
-            model = model.to(torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
-
+            # Create DPO trainer
             trainer = DPOTrainer(
                 model=model,
                 ref_model=None,
@@ -123,10 +139,16 @@ def main():
                 eval_dataset=None
             )
 
+            # Train the model
             trainer.train()
+            
+            # Save the fine-tuned model
             model.save_pretrained(dpo_output_dir)
             tokenizer.save_pretrained(dpo_output_dir)
             print("✅ DPO fine-tuning complete on Anthropic dataset. Proceeding to quantization...")
+
+            # Load the fine-tuned model for quantization
+            model, tokenizer = build_model_and_enc(dpo_output_dir, args.use_flash_attn, args.kv_bit, args.kv_group_size)
 
     ###########################################################################
     else:
