@@ -295,17 +295,21 @@ def main():
             dpo_output_dir = f"./dpo_finetuned_{args.tasks}"
             from datasets import load_dataset
             import pandas as pd
+            import re
             from transformers import AutoTokenizer, AutoModelForCausalLM
 
-            print("Loading Winogender dataset for DPO...")
-            ds = load_dataset("oskarvanderwal/winogender", "all")["test"]  # or your own processed HuggingFace dataset
+            print("Loading Winogender dataset for DPO (subset='all')...")
+            ds = load_dataset("oskarvanderwal/winogender", "all")["test"]
             df = pd.DataFrame(ds)
+            print(f"Loaded {len(df)} rows, unique genders: {df['gender'].unique()}")
+
+            # Clean up sentid: remove gender and .txt
+            def clean_id(x):
+                return re.sub(r'\.(male|female|neutral)\.txt$', '', x)
+
+            df["group_id"] = df["sentid"].apply(clean_id)
 
             pairs = []
-
-            # Each sentence group has male, female, and neutral variants
-            df["group_id"] = df["sentid"].apply(lambda x: ".".join(x.split(".")[:-1]))
-
             for group_id, group in df.groupby("group_id"):
                 neutral = group[group["gender"] == "neutral"]
                 male = group[group["gender"] == "male"]
@@ -327,11 +331,16 @@ def main():
                         "chosen": chosen,
                         "rejected": rejected,
                         "occupation": row["occupation"],
-                        "participant": row["participant"]
+                        "participant": row["participant"],
+                        "group_id": group_id
                     })
 
             pairs_df = pd.DataFrame(pairs)
+            print(f" Constructed {len(pairs_df)} Winogender DPO pairs from {df['group_id'].nunique()} groups")
             print(pairs_df.head())
+
+            if len(pairs_df) == 0:
+                raise ValueError("No Winogender RLHF pairs were formed — check sentid pattern or subset.")
 
             # Load tokenizer and base model
             tokenizer = AutoTokenizer.from_pretrained(args.model_path)
@@ -368,32 +377,7 @@ def main():
                 report_to='none'
             )
 
-            tokenizer.pad_token = tokenizer.eos_token
             train_data = Dataset.from_list(train_data)
-
-            def preprocess(example):
-                return {
-                    "prompt_ids": tokenizer(
-                        example["prompt"],
-                        truncation=True,
-                        padding="max_length",
-                        max_length=512
-                    )["input_ids"],
-                    "chosen_ids": tokenizer(
-                        example["chosen"],
-                        truncation=True,
-                        padding="max_length",
-                        max_length=512
-                    )["input_ids"],
-                    "rejected_ids": tokenizer(
-                        example["rejected"],
-                        truncation=True,
-                        padding="max_length",
-                        max_length=512
-                    )["input_ids"],
-                }
-
-            train_data = train_data.map(preprocess, batched=False)
 
             trainer = DPOTrainer(
                 model=model,
@@ -407,7 +391,8 @@ def main():
             trainer.train()
             model.save_pretrained(dpo_output_dir)
             tokenizer.save_pretrained(dpo_output_dir)
-            print("DPO fine-tuning complete. Proceeding to quantization...")
+            print(" DPO fine-tuning complete. Proceeding to quantization...")
+
 
             
 ###########################################################################
