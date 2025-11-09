@@ -50,6 +50,7 @@ def main():
             from datasets import load_dataset, Dataset
             from transformers import AutoTokenizer, AutoModelForCausalLM
             from trl import DPOTrainer, DPOConfig
+            import torch.nn.functional as F
 
             dpo_output_dir = "./dpo_finetuned_anthropic"
 
@@ -80,22 +81,60 @@ def main():
 
             print("Starting DPO fine-tuning using TRL...")
 
-            # Patch DPOTrainer to fix dtype issue
+            # Comprehensive patch for DPOTrainer to fix dtype issue
             from trl.trainer.dpo_trainer import DPOTrainer as OriginalDPOTrainer
             
             class FixedDPOTrainer(OriginalDPOTrainer):
                 def concatenated_forward(self, model, batch):
                     """Override to ensure input_ids are Long tensors"""
-                    # Ensure all input tensors are the correct dtype
-                    if "concatenated_input_ids" in batch:
-                        batch["concatenated_input_ids"] = batch["concatenated_input_ids"].long()
-                    if "concatenated_attention_mask" in batch:
-                        batch["concatenated_attention_mask"] = batch["concatenated_attention_mask"].long()
-                    if "concatenated_labels" in batch:
-                        batch["concatenated_labels"] = batch["concatenated_labels"].long()
+                    # Get the concatenated inputs
+                    concatenated_batch = self.concatenated_inputs(
+                        batch,
+                        is_encoder_decoder=self.is_encoder_decoder,
+                        is_vision_model=self.is_vision_model,
+                        label_pad_token_id=self.label_pad_token_id,
+                        padding_value=self.padding_value,
+                        device=self.accelerator.device,
+                    )
                     
-                    # Call the parent method
-                    return super().concatenated_forward(model, batch)
+                    # Extract input_ids and ensure it's long type
+                    input_ids = concatenated_batch["concatenated_input_ids"].long()
+                    attention_mask = concatenated_batch.get("concatenated_attention_mask")
+                    if attention_mask is not None:
+                        attention_mask = attention_mask.long()
+                    
+                    # Prepare model kwargs
+                    model_kwargs = {}
+                    if attention_mask is not None:
+                        model_kwargs["attention_mask"] = attention_mask
+                    
+                    if self.is_encoder_decoder:
+                        decoder_input_ids = concatenated_batch.get("concatenated_decoder_input_ids")
+                        if decoder_input_ids is not None:
+                            model_kwargs["decoder_input_ids"] = decoder_input_ids.long()
+                        decoder_attention_mask = concatenated_batch.get("concatenated_decoder_attention_mask")
+                        if decoder_attention_mask is not None:
+                            model_kwargs["decoder_attention_mask"] = decoder_attention_mask.long()
+                    
+                    if self.is_vision_model:
+                        pixel_values = concatenated_batch.get("concatenated_pixel_values")
+                        pixel_attention_mask = concatenated_batch.get("concatenated_pixel_attention_mask")
+                        if pixel_values is not None:
+                            model_kwargs["pixel_values"] = pixel_values
+                        if pixel_attention_mask is not None:
+                            model_kwargs["pixel_attention_mask"] = pixel_attention_mask
+                    
+                    if self.aux_loss_enabled:
+                        model_kwargs["output_router_logits"] = True
+                    
+                    # Call model with corrected dtypes
+                    outputs = model(
+                        input_ids,
+                        **model_kwargs,
+                        use_cache=False,
+                    )
+                    
+                    return outputs
             
             # Configure DPO training
             training_args = DPOConfig(
