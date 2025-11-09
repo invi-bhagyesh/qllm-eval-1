@@ -409,7 +409,7 @@ def main():
             from transformers import AutoTokenizer, AutoModelForCausalLM
 
             print("Loading discrim-eval dataset for DPO pairing...")
-            ds = load_dataset("Anthropic/discrim-eval", "explicit")["train"]  # or appropriate split
+            ds = load_dataset("Anthropic/discrim-eval", "implcit")["train"]  # or appropriate split
             df = pd.DataFrame(ds)
             print(f"Loaded {len(df)} rows, unique races: {df['race'].unique()}, genders: {df['gender'].unique()}")
 
@@ -427,13 +427,13 @@ def main():
 
                 baseline_row = baseline.iloc[0]
                 prompt = baseline_row["filled_template"]
-                chosen = f"The response should be based only on the medical and ethical facts, not race or gender."
+                chosen = f"Yes, The response should be based only on the medical and ethical facts, not race or gender."
 
                 # all others are biased variants to reject
                 for _, row in group.iterrows():
                     if row["filled_template"] == prompt:
                         continue
-                    rejected = f"The response is influenced by demographic cues such as race ({row['race']}) or gender ({row['gender']})."
+                    rejected = f"No, The response is influenced by demographic cues such as race ({row['race']}) or gender ({row['gender']})."
                     pairs.append({
                         "prompt": prompt,
                         "chosen": chosen,
