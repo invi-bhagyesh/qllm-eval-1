@@ -188,6 +188,7 @@ def main():
             model, tokenizer = build_model_and_enc(dpo_output_dir, args.use_flash_attn, args.kv_bit, args.kv_group_size)
 
     elif args.dataset =="pku":
+        print("add")
 
     ###########################################################################
     else:
