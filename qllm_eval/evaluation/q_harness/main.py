@@ -298,7 +298,7 @@ def main():
             from transformers import AutoTokenizer, AutoModelForCausalLM
 
             print("Loading Winogender dataset for DPO...")
-            ds = load_dataset("oskarvanderwal/winogender", split="all")  # or your own processed HuggingFace dataset
+            ds = load_dataset("oskarvanderwal/winogender", "all")  # or your own processed HuggingFace dataset
             df = pd.DataFrame(ds)
 
             pairs = []
