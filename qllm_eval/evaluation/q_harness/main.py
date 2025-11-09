@@ -154,6 +154,133 @@ def main():
             model.save_pretrained(dpo_output_dir)
             tokenizer.save_pretrained(dpo_output_dir)
             print("DPO fine-tuning complete. Proceeding to quantization...")
+###########################################################################
+    elif args.dataset == "bbq":
+        if args.dpo_path is not None:
+            print(f"Loading existing DPO model from {args.dpo_path}, skipping DPO training...")
+            from transformers import AutoTokenizer, AutoModelForCausalLM
+            model, tokenizer = build_model_and_enc(args.dpo_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+        else:
+            model, tokenizer = build_model_and_enc(args.model_path, args.use_flash_attn, args.kv_bit, args.kv_group_size)
+
+            dpo_output_dir = f"./dpo_finetuned_{args.tasks}"
+            from datasets import load_dataset
+            import pandas as pd
+            from transformers import AutoTokenizer, AutoModelForCausalLM
+
+            print("Loading BBQ dataset for DPO...")
+            ds = load_dataset("bbq", "all")["train"]  # or 'validation', depending on availability
+            pairs = []
+
+            # Each example_id groups several related examples
+            for example_id, group in pd.DataFrame(ds).groupby("example_id"):
+                ambig = group[group["context_condition"] == "ambig"]
+
+                for _, amb in ambig.iterrows():
+                    prompt = f"{amb['context']}\n{amb['question']}"
+                    ans_dict = amb["answer_info"]
+                    # valid answers
+                    answers = [
+                        ans_dict["ans0"][0],
+                        ans_dict["ans1"][0],
+                        ans_dict["ans2"][0]
+                    ]
+
+                    chosen = answers[amb["label"]]
+                    # unbiased choice is usually "unknown" or "Cannot be determined"
+                    # reject any gendered/group answers if label is the unbiased one
+                    for i, a in enumerate(answers):
+                        if i == amb["label"]:
+                            continue
+                        if any(x.lower() in a.lower() for x in ["man", "woman", "male", "female"]):
+                            pairs.append({
+                                "prompt": prompt,
+                                "chosen": chosen,
+                                "rejected": a,
+                                "category": amb["category"],
+                                "context_condition": amb["context_condition"],
+                                "question_polarity": amb["question_polarity"]
+                            })
+
+            pairs_df = pd.DataFrame(pairs)
+            print(pairs_df.head())
+
+            # Load tokenizer and base model
+            tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+
+            model = AutoModelForCausalLM.from_pretrained(args.model_path)
+
+            train_data = [{
+                "prompt": row["prompt"],
+                "chosen": row["chosen"],
+                "rejected": row["rejected"]
+            } for _, row in pairs_df.iterrows()]
+
+            print("Starting DPO fine-tuning using TRLX...")
+
+            from trl import DPOTrainer, DPOConfig
+            from datasets import Dataset
+
+            training_args = DPOConfig(
+                output_dir=dpo_output_dir,
+                num_train_epochs=1,
+                per_device_train_batch_size=2,
+                per_device_eval_batch_size=2,
+                remove_unused_columns=False,
+                logging_steps=10,
+                gradient_accumulation_steps=1,
+                learning_rate=5e-6,
+                warmup_steps=2,
+                fp16=False,
+                save_steps=500,
+                eval_strategy="no",
+                report_to='none'
+            )
+
+            tokenizer.pad_token = tokenizer.eos_token
+            train_data = Dataset.from_list(train_data)
+
+            def preprocess(example):
+                return {
+                    "prompt_ids": tokenizer(
+                        example["prompt"],
+                        truncation=True,
+                        padding="max_length",
+                        max_length=512
+                    )["input_ids"],
+                    "chosen_ids": tokenizer(
+                        example["chosen"],
+                        truncation=True,
+                        padding="max_length",
+                        max_length=512
+                    )["input_ids"],
+                    "rejected_ids": tokenizer(
+                        example["rejected"],
+                        truncation=True,
+                        padding="max_length",
+                        max_length=512
+                    )["input_ids"],
+                }
+
+            train_data = train_data.map(preprocess, batched=False)
+
+            trainer = DPOTrainer(
+                model=model,
+                ref_model=None,
+                args=training_args,
+                processing_class=tokenizer,
+                train_dataset=train_data,
+                eval_dataset=None
+            )
+
+            trainer.train()
+            model.save_pretrained(dpo_output_dir)
+            tokenizer.save_pretrained(dpo_output_dir)
+            print("DPO fine-tuning complete. Proceeding to quantization...")
 
 
 
