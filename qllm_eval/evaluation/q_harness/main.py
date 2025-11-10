@@ -185,7 +185,7 @@ def main():
             # Load the fine-tuned model for quantization
             model, tokenizer = build_model_and_enc(dpo_output_dir, args.use_flash_attn, args.kv_bit, args.kv_group_size)
 
-    else if args.dataset == "pku":
+    elif args.dataset == "pku":
         if args.dpo_path is not None:
             print(f"Loading existing DPO model from {args.dpo_path}, skipping DPO training...")
             from transformers import AutoTokenizer, AutoModelForCausalLM
